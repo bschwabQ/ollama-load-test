@@ -37,7 +37,7 @@ PROMPTS = [
   "Explain flash attention’s effect on KV cache bandwidth and throughput at long context.",
 ]
 
-def stream_generate(prompt, options):
+def stream_generate(prompt, options, think=None):
     """
     Streams JSON lines from Ollama /api/generate with partial tokens in 'response' and final metrics on 'done': true.
     """
@@ -48,6 +48,8 @@ def stream_generate(prompt, options):
         "stream": True,
         "options": options
     }
+    if think is not None:
+        data["think"] = think
     # Robust streaming setup with timeouts; rely on requests.iter_lines for incremental chunks.
     with requests.post(url, json=data, stream=True, timeout=600) as r:
         r.raise_for_status()
@@ -104,6 +106,11 @@ def gpu_slug(name):
     return name.replace(" ", "")
 
 
+def model_slug(name):
+    """Turn 'qwen3.5:9b' into 'qwen3.5-9b' (filesystem-safe)."""
+    return name.replace(":", "-").replace("/", "-")
+
+
 def vram_info():
     """
     Returns (vram_bytes, model_size_bytes) if available from /api/ps (not all builds provide VRAM fields).
@@ -133,7 +140,7 @@ def main():
     ap.add_argument("--mirostat_eta", type=float, default=0.1)
     ap.add_argument("--mirostat_tau", type=float, default=5.0)
     ap.add_argument("--num_ctx", type=int, default=8192)
-    ap.add_argument("--num_batch", type=int, default=512)
+    ap.add_argument("--num_batch", type=int, default=1024)
     ap.add_argument("--repeat_last_n", type=int, default=64)
     ap.add_argument("--repeat_penalty", type=float, default=1.08)
     ap.add_argument("--seed", type=int, default=42)
@@ -142,8 +149,17 @@ def main():
     ap.add_argument("--results-dir", default="results", help="Directory for GPU result summaries")
     ap.add_argument("--gpu", default=None, help="Override GPU name for results filename (auto-detected if omitted)")
     ap.add_argument("--no-warmup", action="store_true", help="Skip the warmup iteration")
+    ap.add_argument("--think", action="store_true", default=None, help="Enable thinking/reasoning mode")
+    ap.add_argument("--no-think", action="store_true", help="Disable thinking/reasoning mode")
     ap.add_argument("--benchmark", action="store_true", help="Standard benchmark: warmup + 10 iterations, saves to results dir")
     args = ap.parse_args()
+
+    # Resolve think flag: --think → True, --no-think → False, neither → None (model default)
+    think = None
+    if args.think:
+        think = True
+    elif args.no_think:
+        think = False
 
     # Benchmark mode: warmup + 10 iterations
     if args.benchmark:
@@ -200,7 +216,7 @@ def main():
         try:
             warmup_start = time.perf_counter()
             warmup_tokens = 0
-            for msg in stream_generate(warmup_prompt, options):
+            for msg in stream_generate(warmup_prompt, options, think=think):
                 if "error" in msg:
                     print(f"Warmup error: {msg['error']}", flush=True)
                     break
@@ -240,7 +256,7 @@ def main():
             estimated_total = args.min_output_tokens
 
             try:
-                for msg in stream_generate(prompt, options):
+                for msg in stream_generate(prompt, options, think=think):
                     # Handle errors surfaced by Ollama
                     if "error" in msg:
                         error = msg["error"]
@@ -400,8 +416,10 @@ def main():
         # Write GPU results summary
         if run_results:
             slug = args.gpu or gpu_slug(gi["name"])
+            mslug = model_slug(MODEL)
+            think_suffix = "_think" if think is True else "_nothink" if think is False else ""
             os.makedirs(args.results_dir, exist_ok=True)
-            result_path = os.path.join(args.results_dir, f"{slug}.txt")
+            result_path = os.path.join(args.results_dir, f"{slug}_{mslug}{think_suffix}.txt")
 
             tps_vals = [r["tps"] for r in run_results]
             ttft_vals = [r["ttft_ms"] for r in run_results if r["ttft_ms"] > 0]
