@@ -6,7 +6,7 @@ A continuous benchmark tool for [Ollama](https://ollama.com) models with live st
 
 - **Live progress bar** with token count, thinking token tracking, and average TPS
 - **Benchmark mode** — warmup + 10 iterations with GPU results saved to `results/`
-- **GPU auto-detection** via nvidia-smi, results named by GPU (e.g. `5060Ti.txt`)
+- **GPU auto-detection** via nvidia-smi, results named by GPU and model (e.g. `5090_gemma4-31b.txt`)
 - **Thinking token support** for reasoning models (qwen3.5, etc.)
 - **TTFT (Time To First Token)** measurement per run
 - **VRAM and model size** snapshots via the Ollama API
@@ -72,7 +72,7 @@ python ollama-test.py [OPTIONS]
 | `--mirostat_eta` | `0.1` | Mirostat learning rate |
 | `--mirostat_tau` | `5.0` | Mirostat target entropy |
 | `--num_ctx` | `8192` | Context window size |
-| `--num_batch` | `512` | Batch size |
+| `--num_batch` | `1024` | Batch size |
 | `--repeat_last_n` | `64` | Repeat penalty lookback window |
 | `--repeat_penalty` | `1.08` | Repeat penalty |
 | `--seed` | `42` | Random seed |
@@ -80,6 +80,8 @@ python ollama-test.py [OPTIONS]
 | `--benchmark` | off | Standard benchmark: warmup + 10 iterations, saves to results dir |
 | `--results-dir` | `results` | Directory for GPU result summaries |
 | `--gpu` | auto-detect | Override GPU name for results filename |
+| `--think` | off | Enable thinking/reasoning mode |
+| `--no-think` | off | Disable thinking/reasoning mode |
 | `--no-warmup` | off | Skip the warmup iteration |
 
 ### Environment Variables
@@ -92,7 +94,7 @@ python ollama-test.py [OPTIONS]
 ### Examples
 
 ```bash
-# Standard benchmark — warmup + 10 iterations, saves results to results/<GPU>.txt
+# Standard benchmark — warmup + 10 iterations, saves results to results/<GPU>_<model>.txt
 python ollama-test.py --benchmark
 
 # Run 10 iterations with a specific model
@@ -100,6 +102,9 @@ OLLAMA_MODEL=llama3:8b python ollama-test.py --iterations 10
 
 # Overnight soak test with lower temperature
 python ollama-test.py --temp 0.5 --sleep 5
+
+# Benchmark with thinking disabled (lower TTFT for chat use cases)
+OLLAMA_MODEL=gemma4:31b python ollama-test.py --benchmark --no-think
 
 # Benchmark against a remote Ollama instance
 OLLAMA_HOST=http://192.168.1.100:11434 python ollama-test.py --benchmark
@@ -113,7 +118,7 @@ Each run prints a summary line:
 ✓ 4815 tokens (+4303 thinking) | 51.4 t/s | 93.7s
 ```
 
-Results are appended to both a JSONL file (one JSON object per line) and a CSV file for downstream analysis. When using `--benchmark`, a summary file is saved to `results/<GPU>.txt`.
+Results are appended to both a JSONL file (one JSON object per line) and a CSV file for downstream analysis. When using `--benchmark`, a summary file is saved to `results/<GPU>_<model>.txt` (e.g. `5090_gemma4-31b_nothink.txt`).
 
 ## Prompts
 
