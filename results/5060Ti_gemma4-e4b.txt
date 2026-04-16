@@ -7,31 +7,31 @@ Hardware
   Driver:       595.97
 
 Software
-  Ollama:       0.20.0
+  Ollama:       0.20.7
   Model:        gemma4:e4b
   Context:      8192
   Batch size:   1024
 
 Results (10 iterations, warmup discarded)
-  Avg TPS:      47.8 t/s
-  Min TPS:      33.4 t/s
-  Max TPS:      66.0 t/s
-  Avg TTFT:     13590 ms
-  Total tokens: 13,739
-  Total time:   327.6s
+  Avg TPS:      121.9 t/s
+  Min TPS:      86.5 t/s
+  Max TPS:      166.6 t/s
+  Avg TTFT:     5992 ms
+  Total tokens: 12,471
+  Total time:   114.0s
 
 Per-iteration breakdown
     #   Tokens    Think      TPS      TTFT      Gen
   ---  -------  -------  -------  --------  -------
-    1      654        0    63.0    10776ms    10.4s
-    2    1,764        0    33.7     6500ms    52.3s
-    3    2,398        0    49.0    35396ms    49.0s
-    4      550        0    55.2     7004ms    10.0s
-    5    1,553        0    35.7     9637ms    43.4s
-    6      555        0    66.0     8589ms     8.4s
-    7    1,764        0    33.4     6806ms    52.9s
-    8    2,398        0    48.5    34789ms    49.5s
-    9      550        0    56.7     7162ms     9.7s
-   10    1,553        0    36.9     9241ms    42.1s
+    1      619        0   156.6     5277ms     4.0s
+    2    1,690        0    86.6     3718ms    19.5s
+    3    2,014        0   147.7    13753ms    13.6s
+    4      469        0   124.3     3411ms     3.8s
+    5    1,455        0    89.4     3870ms    16.3s
+    6      596        0   166.6     5278ms     3.6s
+    7    1,690        0    86.5     3617ms    19.5s
+    8    2,014        0   147.4    13729ms    13.7s
+    9      469        0   124.3     3442ms     3.8s
+   10    1,455        0    89.5     3827ms    16.3s
 
-Generated: 2026-04-03T21:06:06.934383+00:00
+Generated: 2026-04-15T19:05:23.143737+00:00
