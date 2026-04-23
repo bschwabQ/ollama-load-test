@@ -234,16 +234,27 @@ def main():
         try:
             warmup_start = time.perf_counter()
             warmup_tokens = 0
+            warmup_thinking = 0
+            last_tick = warmup_start
             for msg in stream_generate(warmup_prompt, options, think=think):
                 if "error" in msg:
                     print(f"Warmup error: {msg['error']}", flush=True)
                     break
+                if "thinking" in msg and msg["thinking"]:
+                    warmup_thinking += 1
                 if "response" in msg and msg["response"]:
                     warmup_tokens += 1
+                now = time.perf_counter()
+                if now - last_tick >= 0.5:
+                    elapsed = now - warmup_start
+                    think_str = f" think:{warmup_thinking}" if warmup_thinking > 0 else ""
+                    print(f"\r  {warmup_tokens:4d}tok{think_str} | {elapsed:4.1f}s", end="", flush=True)
+                    last_tick = now
                 if msg.get("done", False):
                     break
             warmup_elapsed = time.perf_counter() - warmup_start
-            print(f"Warmup done: {warmup_tokens} tokens in {warmup_elapsed:.1f}s (discarded)", flush=True)
+            think_str = f", {warmup_thinking} thinking" if warmup_thinking > 0 else ""
+            print(f"\rWarmup done: {warmup_tokens} tokens{think_str} in {warmup_elapsed:.1f}s (discarded)", flush=True)
         except Exception as e:
             print(f"Warmup failed: {e} (continuing anyway)", flush=True)
         # Reset the prompt cycle so iteration 1 starts fresh from prompt #0
