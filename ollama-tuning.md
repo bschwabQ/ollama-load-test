@@ -86,7 +86,50 @@ sudo nvidia-smi -c EXCLUSIVE_PROCESS
 - **Run-to-run variance is ~2-3 t/s** — the initial 34.7 baseline was likely a favorable run. Steady-state is ~32-33 t/s.
 - **The current docker setup (flash attn + q8_0 KV + keep alive) is already near-optimal** for this model on 16GB VRAM.
 
+## DGX Spark (GB10, unified memory)
+
+Setup notes for running qwen3.6:27b and qwen3.6:35b-a3b-q8_0 pinned in memory simultaneously on a DGX Spark. The GB10 shares ~122 GB of LPDDR5X between CPU and GPU (Ollama reports `memory.total` as `[N/A]` — the `gpu_info()` helper falls back to `/proc/meminfo`).
+
+### systemd override
+
+`/etc/systemd/system/ollama.service.d/override.conf`:
+
+```ini
+[Service]
+Environment="OLLAMA_MAX_LOADED_MODELS=2"
+Environment="OLLAMA_NUM_PARALLEL=2"
+Environment="OLLAMA_FLASH_ATTENTION=1"
+Environment="OLLAMA_KV_CACHE_TYPE=q8_0"
+Environment="OLLAMA_KEEP_ALIVE=-1"
+```
+
+Memory budget with both models resident:
+
+| Component | Size |
+|---|---|
+| qwen3.6:35b-a3b-q8_0 weights | 38 GB |
+| qwen3.6:27b (Q4_K_M) weights | 17 GB |
+| KV cache (8K ctx, 2 slots × 2 models, q8_0) | ~4 GB |
+| **Total** | **~59 GB / 122 GB** |
+
+`NUM_PARALLEL=2` rather than 4: each slot pre-allocates its own KV cache at load time whether or not it's used, so 2 is enough for occasional overlap without paying for 4× KV. Confirmed no single-stream regression.
+
+### Benchmark results (GB10, num_ctx=8192, no-think)
+
+| Model | Weights | Avg TPS | TTFT |
+|---|---|---|---|
+| qwen3.6:35b-a3b-q8_0 (MoE, 3B active) | 38 GB | 43.2 t/s | 273 ms |
+| qwen3.6:27b (Q4_K_M, dense) | 17 GB | 10.8 t/s | 331 ms |
+| qwen3.6:27b-q8_0 (dense) | 30 GB | 7.1 t/s | 384 ms |
+
+Dense qwen3.6:27b is memory-bandwidth-bound — TPS scales inversely with weight size, and both variants are running at 65–80% of the LPDDR5X ceiling (~273 GB/s ÷ weights). The MoE variant crushes both because only ~3B params are active per token. For throughput on GB10, prefer MoE.
+
+### NVFP4 / MXFP8 note
+
+Ollama's `qwen3.6:27b-nvfp4` and `-mxfp8` tags are gated to macOS (`412: this model requires macOS`) — they ship MLX kernels, not Blackwell-native CUDA. Real Blackwell FP4 on Linux needs an out-of-Ollama runtime (vLLM / TensorRT-LLM with NVFP4 checkpoints).
+
 ## TODO
 
 - [ ] Test with `num_ctx=4096` to see if shorter context improves TPS
 - [ ] Compare think vs no-think with current config
+- [ ] Try vLLM or TensorRT-LLM with NVFP4 qwen3.6 weights on GB10
