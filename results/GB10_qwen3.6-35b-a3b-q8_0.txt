@@ -1,0 +1,38 @@
+GPU Results: NVIDIA GB10
+==================================================
+
+Hardware
+  GPU:          NVIDIA GB10
+  VRAM:         124610 MiB
+  Driver:       580.142
+
+Software
+  Ollama:       0.21.1
+  Model:        qwen3.6:35b-a3b-q8_0
+  Context:      8192
+  Batch size:   1024
+
+Results (10 iterations, warmup discarded)
+  Avg TPS:      43.9 t/s
+  Min TPS:      43.0 t/s
+  Max TPS:      44.7 t/s
+  Avg TTFT:     279 ms
+  Total tokens: 25,025
+  Think tokens: 15,827
+  Total time:   570.2s
+
+Per-iteration breakdown
+    #   Tokens    Think      TPS      TTFT      Gen
+  ---  -------  -------  -------  --------  -------
+    1    1,917    1,555    43.9      276ms    43.7s
+    2    2,441    1,513    44.2      285ms    55.2s
+    3    2,597    1,343    43.2      259ms    60.1s
+    4    2,142    1,735    43.4      277ms    49.4s
+    5    3,136    1,683    43.0      300ms    73.0s
+    6    1,632    1,276    43.7      260ms    37.4s
+    7    3,217    2,093    44.6      262ms    72.1s
+    8    2,677    1,356    44.7      270ms    59.9s
+    9    2,050    1,654    44.0      303ms    46.6s
+   10    3,216    1,619    44.1      301ms    73.0s
+
+Generated: 2026-04-23T17:24:32.290176+00:00

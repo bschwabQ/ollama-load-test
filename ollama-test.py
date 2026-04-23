@@ -81,6 +81,7 @@ def gpu_info():
     """
     Returns dict with GPU name, VRAM total, and driver version via nvidia-smi.
     """
+    name, vram, driver = "Unknown GPU", 0, "unknown"
     try:
         out = subprocess.check_output(
             ["nvidia-smi", "--query-gpu=name,memory.total,driver_version",
@@ -89,10 +90,27 @@ def gpu_info():
         ).strip()
         parts = [p.strip() for p in out.split(",")]
         if len(parts) >= 3:
-            return {"name": parts[0], "vram_total_mib": int(parts[1]), "driver": parts[2]}
+            name, driver = parts[0], parts[2]
+            try:
+                vram = int(parts[1])
+            except ValueError:
+                # Unified-memory parts (e.g. Grace Blackwell GB10) report [N/A].
+                # Fall back to total system RAM, since GPU and CPU share it.
+                vram = _system_ram_mib()
     except Exception:
         pass
-    return {"name": "Unknown GPU", "vram_total_mib": 0, "driver": "unknown"}
+    return {"name": name, "vram_total_mib": vram, "driver": driver}
+
+
+def _system_ram_mib():
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) // 1024
+    except Exception:
+        pass
+    return 0
 
 
 def gpu_slug(name):
