@@ -1,0 +1,38 @@
+GPU Results: NVIDIA GB10
+==================================================
+
+Hardware
+  GPU:          NVIDIA GB10
+  VRAM:         124610 MiB
+  Driver:       580.142
+
+Software
+  Ollama:       0.22.0
+  Model:        nemotron-3-super:120b
+  Context:      8192
+  Batch size:   1024
+
+Results (10 iterations, warmup discarded)
+  Avg TPS:      17.6 t/s
+  Min TPS:      17.2 t/s
+  Max TPS:      17.8 t/s
+  Avg TTFT:     430 ms
+  Total tokens: 11,961
+  Think tokens: 2,949
+  Total time:   677.7s
+
+Per-iteration breakdown
+    #   Tokens    Think      TPS      TTFT      Gen
+  ---  -------  -------  -------  --------  -------
+    1      464      102    17.7      447ms    26.3s
+    2      988      104    17.2      433ms    57.5s
+    3      982      247    17.2      438ms    57.1s
+    4      849      404    17.8      408ms    47.6s
+    5    1,890      593    17.8      450ms   106.5s
+    6      609      110    17.8      427ms    34.3s
+    7    1,906       69    17.7      474ms   107.6s
+    8      619       59    17.8      393ms    34.8s
+    9    1,126      455    17.8      389ms    63.4s
+   10    2,528      806    17.7      437ms   142.8s
+
+Generated: 2026-04-29T05:53:29.093032+00:00
