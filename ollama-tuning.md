@@ -121,6 +121,30 @@ Run on Ollama 0.30.6, driver 610.47, num_ctx=8192, num_batch=1024, q8_0 KV cache
 - **Very low variance** (<1.5 t/s spread in both modes) and **clean sub-second TTFT** with no `⚠ TTFT dominates` warning — the explicit think flags worked as intended.
 - **~37% of the 5090's throughput.** The 5060 Ti runs this model at 37.7 t/s vs the 5090's ~102–103 t/s — a ~2.7× gap that tracks the memory-bandwidth difference, as expected for a bandwidth-bound 12B Q4 dense model. Both GPUs are otherwise on identical software/settings.
 
+## 12B variant shootout — best gemma4 12B for a 16GB Blackwell card (RTX 5060 Ti)
+
+The 5060 Ti 16GB is the cheapest/slowest 50-series card, so "what's the best 12B you can actually run on it" is a useful question. All runs: Ollama 0.30.6, driver 610.47, num_ctx=8192, num_batch=1024, q8_0 KV cache + flash attention (the standard docker setup), `--no-think`, 10 iterations. Resident VRAM is from `ollama ps` with the model loaded.
+
+| Variant | Disk | Resident VRAM | Avg TPS | vs Q4_K_M | Quality tier | Runs on Linux? |
+|---------|------|---------------|---------|-----------|--------------|----------------|
+| `12b-it-qat` | 7.2 GB | 7.7 GB | **39.5 t/s** | **+5%** | Q4 size, **QAT-recovered** quality | ✅ |
+| `12b-it-q4_K_M` | 7.6 GB | ~8.4 GB | 37.7 t/s | baseline | naive Q4 | ✅ |
+| `12b-it-q8_0` | 12 GB | 13 GB | 25.7 t/s | −32% | near-bf16 | ✅ (100% GPU, no offload) |
+| `12b-nvfp4` | 10 GB | — | — | — | Blackwell FP4 | ❌ `412: requires macOS` |
+| `12b-mxfp8` | 12 GB | — | — | — | FP8 | ❌ `412: requires macOS` |
+
+### Findings
+
+- **`qat` is the winner — it dominates `q4_K_M` on all three axes at once.** It's *faster* (39.5 vs 37.7 t/s), *smaller* (7.7 vs ~8.4 GB resident), and *higher quality* (quantization-aware training recovers most of the accuracy lost by naive Q4). There is no reason to prefer plain `q4_K_M` over `qat` on this hardware. Make `qat` the default 12B.
+- **`q8_0` is the quality-max option and it does fit** — 13 GB resident stays 100% on GPU in 16 GB with the 8K q8_0 KV cache, no CPU offload. The cost is throughput: 25.7 t/s, ~65% of `qat`. Pick it only when output quality matters more than speed. (No headroom for much longer contexts, though — 13 GB + a larger KV would start to spill.)
+- **`nvfp4` and `mxfp8` are macOS-gated for gemma4 too**, exactly as already documented for qwen3.6 — the pull fails outright with `412: this model requires macOS` (MLX kernels, not CUDA). So despite the 5060 Ti being native Blackwell, you cannot use Ollama's hardware-FP4 path on Linux. Real Blackwell FP4 still needs vLLM / TensorRT-LLM with an NVFP4 checkpoint, out of Ollama.
+- **Throughput tracks weight size, as expected for a bandwidth-bound dense model** — 7.7 GB → 39.5 t/s, 13 GB → 25.7 t/s is almost exactly inverse-linear, confirming the 5060 Ti is memory-bandwidth limited here, not compute limited.
+- **Think/no-think parity holds across variants** — `qat` runs 39.5 t/s no-think vs 39.3 t/s think. As with `q4_K_M`, thinking costs tokens (wall-clock), not per-token rate, so the no-think number is the right one for cross-variant comparison.
+
+### Bottom line for a 16GB card
+
+Default to **`gemma4:12b-it-qat`** (fastest *and* best quality at Q4 footprint). Step up to **`12b-it-q8_0`** only when you want maximum fidelity and can spend ~35% throughput. Skip the FP4/FP8 tags — they don't run on Linux.
+
 ## DGX Spark (GB10, unified memory)
 
 Setup notes for running qwen3.6:27b and qwen3.6:35b-a3b-q8_0 pinned in memory simultaneously on a DGX Spark. The GB10 shares ~122 GB of LPDDR5X between CPU and GPU (Ollama reports `memory.total` as `[N/A]` — the `gpu_info()` helper falls back to `/proc/meminfo`).
