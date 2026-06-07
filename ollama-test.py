@@ -77,6 +77,29 @@ def ollama_version():
     except Exception:
         return "unknown"
 
+def check_model_available():
+    """
+    Fail-fast preflight: confirm the Ollama server is reachable and MODEL is pulled.
+    Returns (ok: bool, message: str).
+    """
+    try:
+        r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=10)
+        r.raise_for_status()
+        names = [m.get("name", "") for m in r.json().get("models", [])]
+    except Exception as e:
+        return False, (f"Cannot reach Ollama at {OLLAMA_HOST} ({e}). "
+                       f"Is the server running and OLLAMA_HOST correct?")
+    # Accept the exact tag, or tolerate a ':latest' shorthand in either direction.
+    pulled = (MODEL in names
+              or f"{MODEL}:latest" in names
+              or (MODEL.endswith(":latest") and MODEL[:-len(":latest")] in names))
+    if not pulled:
+        listed = ", ".join(sorted(n for n in names if n)) or "(none)"
+        return False, (f"Model '{MODEL}' not found on {OLLAMA_HOST}.\n"
+                       f"  Available: {listed}\n"
+                       f"  Pull it with:  ollama pull {MODEL}   (or set OLLAMA_MODEL)")
+    return True, "ok"
+
 def gpu_info():
     """
     Returns dict with GPU name, VRAM total, and driver version via nvidia-smi.
@@ -184,18 +207,38 @@ def main():
         args.iterations = 10
         args.no_warmup = False
 
-    # Prepare CSV header
+    # Preflight: fail fast on a fresh machine if the server is down or the model
+    # isn't pulled, rather than looping through failed iterations and saving nothing.
+    ok, msg = check_model_available()
+    if not ok:
+        print(f"✗ {msg}", file=sys.stderr, flush=True)
+        sys.exit(1)
+
+    # Prepare CSV log. CSV_HEADER is the single source of truth for column order —
+    # the per-row write below indexes the record by these keys, so the header and
+    # rows can never drift apart.
+    CSV_HEADER = [
+        "ts", "model", "prompt_idx", "ttft_ms", "gen_ms", "out_tokens", "thinking_tokens",
+        "tps", "total_ms", "vram_bytes", "model_size_bytes",
+        "temp", "top_p", "mirostat", "mirostat_eta", "mirostat_tau",
+        "num_ctx", "num_batch", "repeat_last_n", "repeat_penalty", "seed", "min_p",
+        "error",
+    ]
     new_csv = not os.path.exists(args.log_csv)
+    if not new_csv:
+        try:
+            with open(args.log_csv, newline="", encoding="utf-8") as f:
+                existing_header = next(csv.reader(f), [])
+            if existing_header and existing_header != CSV_HEADER:
+                print(f"⚠ {args.log_csv} uses an older column layout; appended rows won't "
+                      f"line up with its header. Delete it for a clean schema.",
+                      file=sys.stderr, flush=True)
+        except Exception:
+            pass
     csv_file = open(args.log_csv, "a", newline="", encoding="utf-8")
     csvw = csv.writer(csv_file)
     if new_csv:
-        csvw.writerow([
-            "ts","model","prompt_idx","ttft_ms","gen_ms","out_tokens",
-            "tps","total_ms","vram_bytes","model_size_bytes",
-            "temp","top_p","mirostat","mirostat_eta","mirostat_tau",
-            "num_ctx","num_batch","repeat_last_n","repeat_penalty","seed","min_p",
-            "error"
-        ])
+        csvw.writerow(CSV_HEADER)
 
     options = {
         "temperature": args.temp,
@@ -223,6 +266,13 @@ def main():
     print(f"Ollama version: {version}", flush=True)
     print(f"GPU: {gi['name']} ({gi['vram_total_mib']} MiB, driver {gi['driver']})", flush=True)
     print(f"Using host={OLLAMA_HOST} model={MODEL}", flush=True)
+    # nvidia-smi reads the LOCAL GPU, but OLLAMA_HOST can point at another machine —
+    # in that case the results filename would be stamped with the wrong GPU.
+    host_is_local = any(h in OLLAMA_HOST for h in ("127.0.0.1", "localhost", "0.0.0.0"))
+    if not host_is_local and args.gpu is None:
+        print(f"⚠ OLLAMA_HOST is remote but GPU info is read locally via nvidia-smi; "
+              f"results will be labeled '{gpu_slug(gi['name'])}'. Pass --gpu to override.",
+              flush=True)
     print("Press Ctrl+C to stop.", flush=True)
 
     # Warmup: run one iteration to load the model into VRAM, then discard it
@@ -281,8 +331,6 @@ def main():
             error = None
 
             last_tick = time.perf_counter()
-            last_tokens = 0
-            estimated_total = args.min_output_tokens
 
             try:
                 for msg in stream_generate(prompt, options, think=think):
@@ -334,7 +382,6 @@ def main():
                             f"{avg_tps:5.1f} t/s | {elapsed:4.1f}s"
                         )
                         print(status, end="", flush=True)
-                        last_tokens = tokens
                         last_tick = now
 
                     # End of stream
@@ -376,6 +423,7 @@ def main():
                 "ttft_ms": round(ttft if ttft is not None else -1, 2),
                 "gen_ms": round(gen_ms, 2),
                 "out_tokens": tokens,
+                "thinking_tokens": thinking_tokens,
                 "tps": round(tps, 3),
                 "total_ms": round(total_ms, 2),
                 "vram_bytes": vram_bytes,
@@ -403,13 +451,7 @@ def main():
 
             # Write CSV
             try:
-                csvw.writerow([
-                    record["ts"], record["model"], record["prompt_idx"], record["ttft_ms"], record["gen_ms"],
-                    record["out_tokens"], record["tps"], record["total_ms"], record["vram_bytes"], record["model_size_bytes"],
-                    record["temp"], record["top_p"], record["mirostat"], record["mirostat_eta"], record["mirostat_tau"],
-                    record["num_ctx"], record["num_batch"], record["repeat_last_n"], record["repeat_penalty"], record["seed"], record["min_p"],
-                    record["error"]
-                ])
+                csvw.writerow([record[k] for k in CSV_HEADER])
                 csv_file.flush()
             except Exception as e:
                 print(f"[warn] failed to write CSV: {e}", file=sys.stderr, flush=True)
@@ -429,11 +471,12 @@ def main():
             if error:
                 print(f"✗ Error: {error}", flush=True)
             else:
-                # Thinking-capable models (e.g. gemma4) run without an explicit
-                # --think/--no-think flag fold their think phase into time-to-first
-                # -token: TTFT balloons and the streamed TPS inflates to physically
-                # impossible values. Flag the run when TTFT dominates total time.
-                if ttft is not None and ttft > 0.5 * total_ms and total_ms > 0:
+                # Thinking-capable models run without an explicit --think/--no-think
+                # flag fold their think phase into time-to-first-token: TTFT balloons
+                # and the streamed TPS inflates to impossible values. This is only the
+                # case when no think flag was set, so gate on `think is None` to avoid
+                # false positives on legitimately short (sub-second) generations.
+                if think is None and ttft is not None and total_ms > 0 and ttft > 0.5 * total_ms:
                     print(
                         f"⚠ TTFT ({ttft/1000:.1f}s) dominates total time ({total_ms/1000:.1f}s) — "
                         "TPS is unreliable. For thinking-capable models, pass an explicit "
@@ -489,6 +532,7 @@ def main():
                 f"  Model:        {MODEL}",
                 f"  Context:      {args.num_ctx}",
                 f"  Batch size:   {args.num_batch}",
+                f"  Sampling:     temp={args.temp}, top_p={args.top_p}, min_p={args.min_p}, repeat_penalty={args.repeat_penalty}, seed={args.seed}",
                 f"",
                 f"Results ({len(run_results)} iterations{', warmup discarded' if not args.no_warmup else ''})",
                 f"  Avg TPS:      {avg_tps:.1f} t/s",
