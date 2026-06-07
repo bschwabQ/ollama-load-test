@@ -86,6 +86,26 @@ sudo nvidia-smi -c EXCLUSIVE_PROCESS
 - **Run-to-run variance is ~2-3 t/s** — the initial 34.7 baseline was likely a favorable run. Steady-state is ~32-33 t/s.
 - **The current docker setup (flash attn + q8_0 KV + keep alive) is already near-optimal** for this model on 16GB VRAM.
 
+## Benchmark Results (gemma4:12b-it-q4_K_M, RTX 5090)
+
+Run on Ollama 0.30.6, driver 610.47, num_ctx=8192, num_batch=1024, q8_0 KV cache + flash attention. Model resident footprint: 8.4 GB VRAM (weights + 8K q8_0 KV), fits trivially in the 5090's 32 GB.
+
+| Mode | Avg TPS | Min | Max | Avg TTFT | Notes |
+|------|---------|-----|-----|----------|-------|
+| `--no-think` | 102.3 t/s | 98.8 | 103.9 | 693 ms | pure response generation |
+| `--think`    | 103.1 t/s | 101.8 | 104.9 | 736 ms | 6,550 thinking tokens across 10 iters |
+
+### Findings
+
+- **Thinking is "free" on throughput** — think and no-think generate at the same ~102–103 t/s. Thinking doesn't slow the per-token rate; it just emits more tokens (and so more wall-clock time per request). The `--think` run produced 15,204 total tokens vs 7,181 for `--no-think` over the same 10 prompts.
+- **Very low run-to-run variance** — under 2 t/s spread in both modes, far tighter than the older gemma4:31b runs. The 5090 is comfortably bandwidth-fed for a 12B Q4 model.
+- **TTFT is low and clean (~0.7 s) in both modes.** With explicit `--think`, the first thinking token carries an empty `response` field, so TTFT is measured at the first thinking token rather than absorbing the entire think phase.
+- **q8_0 KV cache + flash attention showed no slowdown** on 0.30.6 — no sign of the old Gemma 3 KV-quant CUDA fallback bug. Keep the recommended docker settings.
+
+### Use explicit `--think` / `--no-think` for thinking-capable Gemma models
+
+Running these models with **no** think flag (the bare default) is unreliable for benchmarking. The model still thinks, but with no explicit `think:true` the think phase isn't streamed as separate tokens — it gets folded into time-to-first-token. TTFT balloons (30+ s for a single prompt), thinking tokens read as 0, and the streamed TPS inflates to physically impossible values (a 12B Q4 caps around 105 t/s on the 5090, yet the bare-default run reported 327 t/s). This is exactly what produced the messy `5090_gemma4-31b.txt` default run — 0 thinking tokens, ~20 s TTFT, and wild 38–458 t/s swings. Always pass an explicit `--think` or `--no-think`. The benchmark now warns when TTFT dominates total run time, which catches this case.
+
 ## DGX Spark (GB10, unified memory)
 
 Setup notes for running qwen3.6:27b and qwen3.6:35b-a3b-q8_0 pinned in memory simultaneously on a DGX Spark. The GB10 shares ~122 GB of LPDDR5X between CPU and GPU (Ollama reports `memory.total` as `[N/A]` — the `gpu_info()` helper falls back to `/proc/meminfo`).

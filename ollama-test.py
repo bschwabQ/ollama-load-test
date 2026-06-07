@@ -429,6 +429,17 @@ def main():
             if error:
                 print(f"✗ Error: {error}", flush=True)
             else:
+                # Thinking-capable models (e.g. gemma4) run without an explicit
+                # --think/--no-think flag fold their think phase into time-to-first
+                # -token: TTFT balloons and the streamed TPS inflates to physically
+                # impossible values. Flag the run when TTFT dominates total time.
+                if ttft is not None and ttft > 0.5 * total_ms and total_ms > 0:
+                    print(
+                        f"⚠ TTFT ({ttft/1000:.1f}s) dominates total time ({total_ms/1000:.1f}s) — "
+                        "TPS is unreliable. For thinking-capable models, pass an explicit "
+                        "--think or --no-think.",
+                        flush=True,
+                    )
                 think_str = f" (+{thinking_tokens} thinking)" if thinking_tokens > 0 else ""
                 print(f"✓ {tokens} tokens{think_str} | {tps:.1f} t/s | {gen_ms/1000:.1f}s", flush=True)
 
