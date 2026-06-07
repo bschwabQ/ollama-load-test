@@ -106,6 +106,21 @@ Run on Ollama 0.30.6, driver 610.47, num_ctx=8192, num_batch=1024, q8_0 KV cache
 
 Running these models with **no** think flag (the bare default) is unreliable for benchmarking. The model still thinks, but with no explicit `think:true` the think phase isn't streamed as separate tokens — it gets folded into time-to-first-token. TTFT balloons (30+ s for a single prompt), thinking tokens read as 0, and the streamed TPS inflates to physically impossible values (a 12B Q4 caps around 105 t/s on the 5090, yet the bare-default run reported 327 t/s). This is exactly what produced the messy `5090_gemma4-31b.txt` default run — 0 thinking tokens, ~20 s TTFT, and wild 38–458 t/s swings. Always pass an explicit `--think` or `--no-think`. The benchmark now warns when TTFT dominates total run time, which catches this case.
 
+## Benchmark Results (gemma4:12b-it-q4_K_M, RTX 5060 Ti 16GB)
+
+Run on Ollama 0.30.6, driver 610.47, num_ctx=8192, num_batch=1024, q8_0 KV cache + flash attention — same docker setup and same Ollama build as the 5090 run above, so the only variable is the GPU. Model resident footprint: 7.6 GB on disk; fits comfortably in 16 GB VRAM alongside the 8K q8_0 KV cache.
+
+| Mode | Avg TPS | Min | Max | Avg TTFT | Notes |
+|------|---------|-----|-----|----------|-------|
+| `--no-think` | 37.7 t/s | 37.4 | 38.2 | 639 ms | 7,030 tokens over 10 iters |
+| `--think`    | 37.7 t/s | 36.8 | 38.3 | 812 ms | 6,342 thinking tokens over 10 iters |
+
+### Findings
+
+- **Thinking is "free" on throughput here too** — identical ~37.7 t/s in both modes, matching the 5090 pattern. Think mode just emits more tokens (14,964 total vs 7,030 for no-think), so it costs wall-clock, not per-token rate.
+- **Very low variance** (<1.5 t/s spread in both modes) and **clean sub-second TTFT** with no `⚠ TTFT dominates` warning — the explicit think flags worked as intended.
+- **~37% of the 5090's throughput.** The 5060 Ti runs this model at 37.7 t/s vs the 5090's ~102–103 t/s — a ~2.7× gap that tracks the memory-bandwidth difference, as expected for a bandwidth-bound 12B Q4 dense model. Both GPUs are otherwise on identical software/settings.
+
 ## DGX Spark (GB10, unified memory)
 
 Setup notes for running qwen3.6:27b and qwen3.6:35b-a3b-q8_0 pinned in memory simultaneously on a DGX Spark. The GB10 shares ~122 GB of LPDDR5X between CPU and GPU (Ollama reports `memory.total` as `[N/A]` — the `gpu_info()` helper falls back to `/proc/meminfo`).
