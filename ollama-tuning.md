@@ -128,14 +128,14 @@ The 5060 Ti 16GB is the cheapest/slowest 50-series card, so "what's the best 12B
 | Variant | Disk | Resident VRAM | Avg TPS | vs Q4_K_M | Quality tier | Runs on Linux? |
 |---------|------|---------------|---------|-----------|--------------|----------------|
 | `12b-it-qat` | 7.2 GB | 7.7 GB | **39.5 t/s** | **+5%** | Q4 size, **QAT-recovered** quality | ✅ |
-| `12b-it-q4_K_M` | 7.6 GB | ~8.4 GB | 37.7 t/s | baseline | naive Q4 | ✅ |
+| `12b-it-q4_K_M` | 7.6 GB | 8.1 GB | 37.7 t/s | baseline | naive Q4 | ✅ |
 | `12b-it-q8_0` | 12 GB | 13 GB | 25.7 t/s | −32% | near-bf16 | ✅ (100% GPU, no offload) |
 | `12b-nvfp4` | 10 GB | — | — | — | Blackwell FP4 | ❌ `412: requires macOS` |
 | `12b-mxfp8` | 12 GB | — | — | — | FP8 | ❌ `412: requires macOS` |
 
 ### Findings
 
-- **`qat` is the winner — it dominates `q4_K_M` on all three axes at once.** It's *faster* (39.5 vs 37.7 t/s), *smaller* (7.7 vs ~8.4 GB resident), and *higher quality* (quantization-aware training recovers most of the accuracy lost by naive Q4). There is no reason to prefer plain `q4_K_M` over `qat` on this hardware. Make `qat` the default 12B.
+- **`qat` is the winner — it dominates `q4_K_M` on all three axes at once.** It's *faster* (39.5 vs 37.7 t/s), *smaller* (7.7 vs 8.1 GB resident), and *higher quality* (quantization-aware training recovers most of the accuracy lost by naive Q4). There is no reason to prefer plain `q4_K_M` over `qat` on this hardware. Make `qat` the default 12B.
 - **`q8_0` is the quality-max option and it does fit** — 13 GB resident stays 100% on GPU in 16 GB with the 8K q8_0 KV cache, no CPU offload. The cost is throughput: 25.7 t/s, ~65% of `qat`. Pick it only when output quality matters more than speed. (No headroom for much longer contexts, though — 13 GB + a larger KV would start to spill.)
 - **`nvfp4` and `mxfp8` are macOS-gated for gemma4 too**, exactly as already documented for qwen3.6 — the pull fails outright with `412: this model requires macOS` (MLX kernels, not CUDA). So despite the 5060 Ti being native Blackwell, you cannot use Ollama's hardware-FP4 path on Linux. Real Blackwell FP4 still needs vLLM / TensorRT-LLM with an NVFP4 checkpoint, out of Ollama.
 - **Throughput tracks weight size, as expected for a bandwidth-bound dense model** — 7.7 GB → 39.5 t/s, 13 GB → 25.7 t/s is almost exactly inverse-linear, confirming the 5060 Ti is memory-bandwidth limited here, not compute limited.
