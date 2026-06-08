@@ -165,6 +165,33 @@ The same three variants on the 5090, for a cross-machine comparison. Identical s
 
 `qat` for throughput on both cards. On the 5090, `q8_0` is a sensible quality-max default (only −27%, VRAM is free); on the 5060 Ti, reserve `q8_0` for when fidelity genuinely outweighs the ~35% hit.
 
+## MTP / speculative decoding on Linux+CUDA — gemma4 is not supported
+
+Empirically established on Ollama 0.30.6 (CUDA, RTX 5060 Ti) by trying to wire up a draft model with `ollama create` + the Modelfile `DRAFT` directive. Three runtime facts, each from an actual error:
+
+1. **`DRAFT` is MTP-specific, not generic speculative decoding.** Attaching a plain small model (`gemma4:e2b`) as a draft for a `gemma4:12b-it-qat` target fails at load with `context type MTP requested but model doesn't contain MTP layers` (the llama-server segfaults). You cannot use an arbitrary small model as a vanilla draft — the draft must itself contain trained MTP layers.
+
+2. **The CUDA MTP path only accepts a qwen3.5 base.** Importing Google's official `google/gemma-4-E4B-it-assistant` MTP drafter (a 159 MB `model.safetensors`, `model_type: gemma4_assistant`) via `DRAFT` fails with `MTP draft safetensors require a qwen3.5 base model, got "gemma4"`.
+
+3. **gemma4 MTP lives only in the MLX (macOS) backend** — see ollama/ollama PR #15980, titled *"mlx: Gemma4 MTP speculative decoding"*.
+
+**Conclusion:** gemma4 MTP / speculative decoding is impossible on Linux + CUDA through Ollama, for any size (12B, E4B, …), regardless of drafter source. This is the same pattern as the macOS-gated `nvfp4`/`mxfp8` tags: gemma4's accelerated paths in Ollama are consistently Apple-only, and on Linux/CUDA you get standard autoregressive inference. To actually exercise MTP speculative decoding on this card you'd have to switch model families to **qwen3.5** (the only CUDA-supported MTP base), which is a separate experiment.
+
+### `ollama create` + DRAFT mechanics (for reference)
+
+For when a *supported* (qwen3.5) base is used:
+
+```
+# Modelfile
+FROM <ollama-model-or-safetensors-dir>
+DRAFT <path-to-draft-gguf-or-safetensors-dir>
+```
+
+- `DRAFT` takes a **filesystem path**, not an Ollama model name (a model name gets `stat`-ed as a relative path and fails).
+- `--experimental` forces `FROM` to be parsed as a safetensors dir too, so don't combine it with a `FROM <ollama-model-name>`.
+- `--draft-quantize <level>` quantizes the draft during create.
+- If using Docker with a bind-mounted data dir, the draft files must live under that mount (or be `docker cp`-ed into the container) for the server to read them.
+
 ## DGX Spark (GB10, unified memory)
 
 Setup notes for running qwen3.6:27b and qwen3.6:35b-a3b-q8_0 pinned in memory simultaneously on a DGX Spark. The GB10 shares ~122 GB of LPDDR5X between CPU and GPU (Ollama reports `memory.total` as `[N/A]` — the `gpu_info()` helper falls back to `/proc/meminfo`).
