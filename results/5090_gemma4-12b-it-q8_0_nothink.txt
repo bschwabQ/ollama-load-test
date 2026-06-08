@@ -1,0 +1,38 @@
+GPU Results: NVIDIA GeForce RTX 5090
+==================================================
+
+Hardware
+  GPU:          NVIDIA GeForce RTX 5090
+  VRAM:         32607 MiB
+  Driver:       610.47
+
+Software
+  Ollama:       0.30.6
+  Model:        gemma4:12b-it-q8_0
+  Context:      8192
+  Batch size:   1024
+  Sampling:     temp=0.7, top_p=0.9, min_p=0.05, repeat_penalty=1.08, seed=42
+
+Results (10 iterations, warmup discarded)
+  Avg TPS:      77.2 t/s
+  Min TPS:      76.3 t/s
+  Max TPS:      78.2 t/s
+  Avg TTFT:     747 ms
+  Total tokens: 7,460
+  Total time:   96.5s
+
+Per-iteration breakdown
+    #   Tokens    Think      TPS      TTFT      Gen
+  ---  -------  -------  -------  --------  -------
+    1      279        0    76.4      696ms     3.7s
+    2      934        0    77.5      682ms    12.1s
+    3    1,116        0    76.9      733ms    14.5s
+    4      425        0    76.3      745ms     5.6s
+    5      991        0    78.0      864ms    12.7s
+    6      249        0    76.9      882ms     3.2s
+    7      934        0    77.5      659ms    12.0s
+    8    1,116        0    77.0      649ms    14.5s
+    9      425        0    77.2      659ms     5.5s
+   10      991        0    78.2      902ms    12.7s
+
+Generated: 2026-06-08T00:06:01.103027+00:00
