@@ -145,6 +145,26 @@ The 5060 Ti 16GB is the cheapest/slowest 50-series card, so "what's the best 12B
 
 Default to **`gemma4:12b-it-qat`** (fastest *and* best quality at Q4 footprint). Step up to **`12b-it-q8_0`** only when you want maximum fidelity and can spend ~35% throughput. Skip the FP4/FP8 tags — they don't run on Linux.
 
+## 12B variant shootout — RTX 5090 (32GB)
+
+The same three variants on the 5090, for a cross-machine comparison. Identical software/settings (Ollama 0.30.6, driver 610.47, num_ctx=8192, num_batch=1024, q8_0 KV cache + flash attention, `--no-think`, 10 iterations). Resident VRAM from `ollama ps`. The FP4/FP8 tags are macOS-gated and skipped for the same reason as above.
+
+| Variant | Resident VRAM | 5090 TPS | vs `qat` | 5060 Ti TPS | 5090 / 5060 Ti |
+|---------|---------------|----------|----------|-------------|----------------|
+| `12b-it-qat` | 8.0 GB | **105.9 t/s** | baseline | 39.5 | 2.68× |
+| `12b-it-q4_K_M` | 8.4 GB | 102.3 t/s | −3% | 37.7 | 2.71× |
+| `12b-it-q8_0` | 13.7 GB | 77.2 t/s | −27% | 25.7 | **3.00×** |
+
+### Findings
+
+- **`qat` wins here too** — 105.9 t/s, fastest and smallest, edging `q4_K_M` by ~3.5%. The 16GB recommendation carries over: `qat` is the default 12B on either card. Think parity holds (105.7 t/s with `--think`).
+- **`q8_0` is much more attractive on the 5090 than on the 5060 Ti.** It costs only **−27%** vs `qat` here (77.2 vs 105.9), against **−35%** on the 5060 Ti — and resident VRAM is a non-issue at 13.7/32 GB. So on the 32GB card, `q8_0` is a reasonable quality-max default; on the 16GB card the steeper penalty plus tight headroom make `qat` the clearer pick.
+- **The 5090 is not fully bandwidth-bound on a 12B.** If it were, going 8.0 → 13.7 GB of weights would drop throughput to ~62 t/s (inverse-linear); the actual 77.2 t/s is well above that. Contrast the 5060 Ti, where q8_0 lands almost exactly on the inverse-linear prediction — that card *is* bandwidth-limited. This also explains why the 5090's lead stretches to 3.0× on `q8_0` but sits at ~2.7× on the lighter Q4s: on a small model the 5090 has bandwidth to spare, so the cards are relatively closer.
+
+### Bottom line
+
+`qat` for throughput on both cards. On the 5090, `q8_0` is a sensible quality-max default (only −27%, VRAM is free); on the 5060 Ti, reserve `q8_0` for when fidelity genuinely outweighs the ~35% hit.
+
 ## DGX Spark (GB10, unified memory)
 
 Setup notes for running qwen3.6:27b and qwen3.6:35b-a3b-q8_0 pinned in memory simultaneously on a DGX Spark. The GB10 shares ~122 GB of LPDDR5X between CPU and GPU (Ollama reports `memory.total` as `[N/A]` — the `gpu_info()` helper falls back to `/proc/meminfo`).
