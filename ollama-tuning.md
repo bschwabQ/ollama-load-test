@@ -165,24 +165,28 @@ The same three variants on the 5090, for a cross-machine comparison. Identical s
 
 `qat` for throughput on both cards. On the 5090, `q8_0` is a sensible quality-max default (only −27%, VRAM is free); on the 5060 Ti, reserve `q8_0` for when fidelity genuinely outweighs the ~35% hit.
 
-## Driver + Ollama upgrade re-run — gemma4:12b-it-qat on RTX 5090
+## Driver + Ollama upgrade re-run — 12B shootout on RTX 5090
 
-Re-ran the `qat` 12B benchmark on the 5090 after upgrading the stack: Ollama **0.30.6 → 0.30.9** and NVIDIA driver **610.47 → 610.62** (CUDA UMD 13.3). Everything else was held constant — same RTX 5090, same docker config (flash attention + q8_0 KV cache + `KEEP_ALIVE=-1`, default `NUM_PARALLEL`), num_ctx=8192, num_batch=1024, seed=42, same prompt set. The container was recreated to the documented-standard env before the run, so the only changed variables are the Ollama and driver versions. The workload matched the prior run to the token (7,373 generated tokens no-think; ~15,750 total with ~6,800 thinking tokens for think), so the TPS delta is the upgrade alone.
+Re-ran the full 12B variant shootout on the 5090 after upgrading the stack: Ollama **0.30.6 → 0.30.9** and NVIDIA driver **610.47 → 610.62** (CUDA UMD 13.3). Everything else was held constant — same RTX 5090, same docker config (flash attention + q8_0 KV cache + `KEEP_ALIVE=-1`, default `NUM_PARALLEL`), num_ctx=8192, num_batch=1024, seed=42, `--no-think`, 10 iterations, same prompt set. The container was recreated to the documented-standard env before the runs, so the only changed variables are the Ollama and driver versions. Each variant's workload matched its prior run to within a few tokens, so the TPS delta is the upgrade alone. Resident VRAM from `ollama ps`.
 
-| Mode | 0.30.6 / 610.47 | 0.30.9 / 610.62 | Δ |
-|------|-----------------|-----------------|-----|
-| `--no-think` | 105.9 t/s | **113.4 t/s** | **+7.1%** |
-| `--think`    | 105.7 t/s | **113.6 t/s** | **+7.5%** |
+| Variant | Resident (0.30.9) | 0.30.6 TPS | 0.30.9 TPS | upgrade Δ | vs qat (0.30.9) |
+|---------|-------------------|------------|------------|-----------|-----------------|
+| `12b-it-qat`    | 7.7 GB | 105.9 | **113.4 t/s** | **+7.1%** | baseline |
+| `12b-it-q4_K_M` | 8.1 GB | 102.3 | **109.9 t/s** | **+7.4%** | −3.1% |
+| `12b-it-q8_0`   | 13 GB  | 77.2  | **81.2 t/s**  | **+5.2%** | −28% |
 
-Resident VRAM (`ollama ps`): 7.7 GB, down from the 8.0 GB recorded on 0.30.6.
+(`qat` think parity holds on the new stack too: 113.6 t/s with `--think` vs 113.4 no-think, TTFT flat at ~0.7–0.8 s in both modes.)
 
 ### Findings
 
-- **~7% faster in both modes from the upgrade alone** — no-think 105.9 → 113.4 t/s, think 105.7 → 113.6 t/s, on identical settings and identical token counts. The gain is the same size in think and no-think, consistent with a per-token decode improvement in the driver/runtime rather than anything think-specific.
-- **TTFT was flat** — 704 → 722 ms (no-think), 786 → 830 ms (think), both within run-to-run noise. The upgrade moved throughput, not first-token latency.
-- **Variance stayed tight** (no-think 111.8–114.4, think 110.9–116.1) with no `⚠ TTFT dominates` warning — the explicit think flags behaved as in the earlier runs.
-- **Resident VRAM dropped slightly** (8.0 → 7.7 GB), now matching the 5060 Ti's qat footprint. Minor, but the newer build is marginally leaner.
-- **Only `qat` was re-measured this round.** The `q4_K_M` / `q8_0` rows in the shootout tables above are still 0.30.6-era numbers; treat 113.4 t/s (qat, 0.30.9) as the current single-stream ceiling for a 12B on this card, and re-run the other variants before comparing them against it.
+- **The upgrade lifted every variant ~5–7%, ranking unchanged.** qat +7.1%, q4_K_M +7.4%, q8_0 +5.2%, all on byte-identical settings and matching token counts, with tight variance and no `⚠ TTFT dominates` warning. The 0.30.6→0.30.9 + driver bump is a real, free throughput win, not a measurement artifact.
+- **`qat` is still the best 12B — fastest *and* smallest.** 113.4 t/s at 7.7 GB resident, edging `q4_K_M` by ~3% (same margin as on 0.30.6) on less VRAM and with QAT-recovered quality. The verdict is unchanged: default to `qat`.
+- **`q8_0` gained the least (+5.2% vs ~+7%).** It's the most bandwidth-bound of the three — 13 GB of weights to stream per token — so a runtime/driver improvement that's partly compute/overhead shows up smaller. Its gap to qat is essentially unchanged (−28% vs the old −27%): still the quality-max pick when fidelity outweighs ~28% throughput, and VRAM-trivial at 13/32 GB.
+- **Resident VRAM is leaner across the board on 0.30.9** — 7.7 / 8.1 / 13 GB vs the old 8.0 / 8.4 / 13.7 GB. A few hundred MB per model; consistent with the newer build, not workload-dependent.
+
+### Bottom line (new stack)
+
+Same ranking as before, just faster: `qat` for throughput on the 5090 (113.4 t/s, smallest footprint), `q8_0` as the quality-max default when you can spend the ~28% (VRAM is free on a 32 GB card). The driver + Ollama upgrade is worth taking — ~7% for free with no config change.
 
 ## MTP / speculative decoding on Linux+CUDA — gemma4 is not supported
 
