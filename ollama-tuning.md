@@ -165,6 +165,25 @@ The same three variants on the 5090, for a cross-machine comparison. Identical s
 
 `qat` for throughput on both cards. On the 5090, `q8_0` is a sensible quality-max default (only −27%, VRAM is free); on the 5060 Ti, reserve `q8_0` for when fidelity genuinely outweighs the ~35% hit.
 
+## Driver + Ollama upgrade re-run — gemma4:12b-it-qat on RTX 5090
+
+Re-ran the `qat` 12B benchmark on the 5090 after upgrading the stack: Ollama **0.30.6 → 0.30.9** and NVIDIA driver **610.47 → 610.62** (CUDA UMD 13.3). Everything else was held constant — same RTX 5090, same docker config (flash attention + q8_0 KV cache + `KEEP_ALIVE=-1`, default `NUM_PARALLEL`), num_ctx=8192, num_batch=1024, seed=42, same prompt set. The container was recreated to the documented-standard env before the run, so the only changed variables are the Ollama and driver versions. The workload matched the prior run to the token (7,373 generated tokens no-think; ~15,750 total with ~6,800 thinking tokens for think), so the TPS delta is the upgrade alone.
+
+| Mode | 0.30.6 / 610.47 | 0.30.9 / 610.62 | Δ |
+|------|-----------------|-----------------|-----|
+| `--no-think` | 105.9 t/s | **113.4 t/s** | **+7.1%** |
+| `--think`    | 105.7 t/s | **113.6 t/s** | **+7.5%** |
+
+Resident VRAM (`ollama ps`): 7.7 GB, down from the 8.0 GB recorded on 0.30.6.
+
+### Findings
+
+- **~7% faster in both modes from the upgrade alone** — no-think 105.9 → 113.4 t/s, think 105.7 → 113.6 t/s, on identical settings and identical token counts. The gain is the same size in think and no-think, consistent with a per-token decode improvement in the driver/runtime rather than anything think-specific.
+- **TTFT was flat** — 704 → 722 ms (no-think), 786 → 830 ms (think), both within run-to-run noise. The upgrade moved throughput, not first-token latency.
+- **Variance stayed tight** (no-think 111.8–114.4, think 110.9–116.1) with no `⚠ TTFT dominates` warning — the explicit think flags behaved as in the earlier runs.
+- **Resident VRAM dropped slightly** (8.0 → 7.7 GB), now matching the 5060 Ti's qat footprint. Minor, but the newer build is marginally leaner.
+- **Only `qat` was re-measured this round.** The `q4_K_M` / `q8_0` rows in the shootout tables above are still 0.30.6-era numbers; treat 113.4 t/s (qat, 0.30.9) as the current single-stream ceiling for a 12B on this card, and re-run the other variants before comparing them against it.
+
 ## MTP / speculative decoding on Linux+CUDA — gemma4 is not supported
 
 Empirically established on Ollama 0.30.6 (CUDA, RTX 5060 Ti) by trying to wire up a draft model with `ollama create` + the Modelfile `DRAFT` directive. Three runtime facts, each from an actual error:
