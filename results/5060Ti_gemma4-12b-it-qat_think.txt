@@ -4,36 +4,36 @@ GPU Results: NVIDIA GeForce RTX 5060 Ti
 Hardware
   GPU:          NVIDIA GeForce RTX 5060 Ti
   VRAM:         16311 MiB
-  Driver:       610.47
+  Driver:       610.62
 
 Software
-  Ollama:       0.30.6
+  Ollama:       0.30.10
   Model:        gemma4:12b-it-qat
   Context:      8192
   Batch size:   1024
   Sampling:     temp=0.7, top_p=0.9, min_p=0.05, repeat_penalty=1.08, seed=42
 
 Results (10 iterations, warmup discarded)
-  Avg TPS:      39.3 t/s
-  Min TPS:      38.8 t/s
-  Max TPS:      39.7 t/s
-  Avg TTFT:     805 ms
-  Total tokens: 15,007
-  Think tokens: 6,367
-  Total time:   382.4s
+  Avg TPS:      40.3 t/s
+  Min TPS:      39.7 t/s
+  Max TPS:      40.9 t/s
+  Avg TTFT:     830 ms
+  Total tokens: 14,791
+  Think tokens: 6,048
+  Total time:   367.5s
 
 Per-iteration breakdown
     #   Tokens    Think      TPS      TTFT      Gen
   ---  -------  -------  -------  --------  -------
-    1      832      515    39.6      799ms    21.0s
-    2    1,844      498    38.8      840ms    47.5s
-    3    1,674      591    39.0      896ms    42.9s
-    4    1,151      749    39.7      846ms    29.0s
-    5    1,940      772    39.4      843ms    49.2s
-    6      957      632    39.6      874ms    24.2s
-    7    1,844      498    38.8      870ms    47.6s
-    8    1,674      591    39.0      684ms    43.0s
-    9    1,151      749    39.7      705ms    29.0s
-   10    1,940      772    39.5      689ms    49.1s
+    1      832      515    40.5      821ms    20.5s
+    2    1,844      498    39.8      842ms    46.4s
+    3    1,677      535    39.9      851ms    42.0s
+    4    1,149      749    40.8      991ms    28.2s
+    5    1,940      772    40.5      847ms    47.9s
+    6      739      425    40.9      987ms    18.1s
+    7    1,844      498    39.7      759ms    46.5s
+    8    1,677      535    40.0      708ms    41.9s
+    9    1,149      749    40.7      766ms    28.2s
+   10    1,940      772    40.5      728ms    47.9s
 
-Generated: 2026-06-07T23:42:18.083188+00:00
+Generated: 2026-06-18T04:31:10.126830+00:00
