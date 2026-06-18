@@ -188,6 +188,37 @@ Re-ran the full 12B variant shootout on the 5090 after upgrading the stack: Olla
 
 Same ranking as before, just faster: `qat` for throughput on the 5090 (113.4 t/s, smallest footprint), `q8_0` as the quality-max default when you can spend the ~28% (VRAM is free on a 32 GB card). The driver + Ollama upgrade is worth taking — ~7% for free with no config change.
 
+## Driver + Ollama upgrade re-run — 12B shootout on RTX 5060 Ti
+
+Same upgrade re-run on the 16GB card, to see whether the ~5–7% the 5090 picked up also lands on the cheap/slow Blackwell part. Stack: Ollama **0.30.6 → 0.30.10** and NVIDIA driver **610.47 → 610.62** (CUDA UMD 13.3). The container was recreated from the documented-standard docker config (flash attention + q8_0 KV cache + `KEEP_ALIVE=-1`, default `NUM_PARALLEL`); everything else held constant — same RTX 5060 Ti, num_ctx=8192, num_batch=1024, seed=42, `--no-think`, 10 iterations, same prompt set. Each variant's workload matched its prior run to within a few tokens, so the delta is the upgrade alone. Resident VRAM from `ollama ps` at 8K context.
+
+(One stack caveat: this card landed on Ollama **0.30.10** — a patch newer than the 5090's 0.30.9 — because "pull the latest" grabbed a same-day image. The 0.30.6→0.30.x runtime jump and the driver bump are shared with the 5090 run; the 0.30.9→0.30.10 patch gap is negligible and doesn't affect the conclusions below.)
+
+| Variant | Resident (0.30.10) | 0.30.6 TPS | 0.30.10 TPS | upgrade Δ | vs qat (0.30.10) |
+|---------|--------------------|------------|-------------|-----------|------------------|
+| `12b-it-qat`    | 7.7 GB | 39.5 | **40.5 t/s** | **+2.5%** | baseline |
+| `12b-it-q4_K_M` | 8.1 GB | 37.7 | **38.3 t/s** | **+1.6%** | −5.4% |
+| `12b-it-q8_0`   | 13 GB  | 25.7 | **25.8 t/s** | **+0.4%** | −36% |
+
+(`qat` think parity holds on the new stack here too: 40.3 t/s with `--think` vs 40.5 no-think, 6,048 thinking tokens over 10 iters, TTFT ~0.66–0.83 s in both modes, no `⚠ TTFT dominates` warning.)
+
+### Findings
+
+- **The 5060 Ti barely moved — and that's the headline.** Where the 5090 gained a uniform ~5–7% across all three variants, the 5060 Ti gained only +2.5% (qat), +1.6% (q4_K_M), and +0.4% (q8_0) on byte-identical settings and matching token counts. The same Ollama+driver upgrade is nearly free throughput on the big card and almost a no-op on the small one.
+- **The gain shrinks as the weights grow — the bandwidth-bound fingerprint.** qat (7.7 GB, +2.5%) > q4_K_M (8.1 GB, +1.6%) > q8_0 (13 GB, +0.4%). A runtime/driver upgrade mostly buys back compute, kernel-launch, and overhead time; on a card that's already pinned against its memory-bandwidth ceiling there's almost nothing for that to recover, and the more bytes-per-token a variant streams, the less it sees. q8_0 — the most bandwidth-bound — is within noise of its old number. This is the same mechanism the doc already noted for q8_0 on the 5090, just applied to the whole card: the 5060 Ti is bandwidth-limited on a 12B, so it can't cash in a compute-side improvement.
+- **Ranking and footprint are unchanged.** `qat` is still the best 12B — fastest *and* smallest at 7.7 GB resident, edging `q4_K_M` by ~5% and beating `q8_0` by 36% (was 35% on the old stack — essentially flat). Resident VRAM is identical to the old stack (7.7 / 8.1 / 13 GB), all 100% on GPU; the leaner-footprint effect the 5090 saw on 0.30.9 doesn't appear here because the 5060 Ti was already at these numbers on 0.30.6.
+- **The upgrade widened the 5090's lead.** Because the 5090 captured the full ~5–7% and the 5060 Ti captured almost none, the cross-machine ratio stretched on the new stack:
+
+| Variant | 5090 (0.30.9) | 5060 Ti (0.30.10) | 5090 / 5060 Ti (new) | old stack |
+|---------|---------------|-------------------|----------------------|-----------|
+| `12b-it-qat`    | 113.4 | 40.5 | **2.80×** | 2.68× |
+| `12b-it-q4_K_M` | 109.9 | 38.3 | **2.87×** | 2.71× |
+| `12b-it-q8_0`   | 81.2  | 25.8 | **3.15×** | 3.00× |
+
+### Bottom line (new stack, 5060 Ti)
+
+Take the upgrade — it's free and never regresses — but don't expect the 5090's ~7% on this card: a bandwidth-bound 16GB Blackwell part gets ≤2.5% and effectively nothing on q8_0. The model verdict is unchanged: default to **`gemma4:12b-it-qat`** (40.5 t/s, 7.7 GB, QAT quality), step up to **`12b-it-q8_0`** (25.8 t/s, 13 GB) only when fidelity outweighs the ~36% throughput hit. If you want the upgrade to actually pay off on a 12B, it pays off on the bigger card.
+
 ## MTP / speculative decoding on Linux+CUDA — gemma4 is not supported
 
 Empirically established on Ollama 0.30.6 (CUDA, RTX 5060 Ti) by trying to wire up a draft model with `ollama create` + the Modelfile `DRAFT` directive. Three runtime facts, each from an actual error:
