@@ -1,0 +1,39 @@
+GPU Results: NVIDIA GeForce RTX 5090
+==================================================
+
+Hardware
+  GPU:          NVIDIA GeForce RTX 5090
+  VRAM:         32607 MiB
+  Driver:       610.62
+
+Software
+  Ollama:       0.30.11
+  Model:        ornith-35b
+  Context:      32768
+  Batch size:   1024
+  Sampling:     temp=0.6, top_p=0.95, min_p=0.05, repeat_penalty=1.08, seed=42
+
+Results (10 iterations, warmup discarded)
+  Avg TPS:      177.7 t/s
+  Min TPS:      172.0 t/s
+  Max TPS:      181.1 t/s
+  Avg TTFT:     688 ms
+  Total tokens: 28,814
+  Think tokens: 21,176
+  Total time:   162.0s
+
+Per-iteration breakdown
+    #   Tokens    Think      TPS      TTFT      Gen
+  ---  -------  -------  -------  --------  -------
+    1    2,970    2,700   181.1      687ms    16.4s
+    2    4,133    3,167   178.8      619ms    23.1s
+    3    2,336    1,236   172.0      711ms    13.6s
+    4    2,157    1,719   176.0      702ms    12.3s
+    5    2,811    1,766   179.9      720ms    15.6s
+    6    2,970    2,700   178.7      730ms    16.6s
+    7    4,133    3,167   177.4      654ms    23.3s
+    8    2,336    1,236   177.5      621ms    13.2s
+    9    2,157    1,719   178.0      621ms    12.1s
+   10    2,811    1,766   178.0      815ms    15.8s
+
+Generated: 2026-06-27T07:02:18.831529+00:00
