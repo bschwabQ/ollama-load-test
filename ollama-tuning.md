@@ -288,6 +288,39 @@ Dense qwen3.6:27b is memory-bandwidth-bound — TPS scales inversely with weight
 
 Ollama's `qwen3.6:27b-nvfp4` and `-mxfp8` tags are gated to macOS (`412: this model requires macOS`) — they ship MLX kernels, not Blackwell-native CUDA. Real Blackwell FP4 on Linux needs an out-of-Ollama runtime (vLLM / TensorRT-LLM with NVFP4 checkpoints).
 
+## Benchmark Results (Ornith-1.0 9B vs 35B, RTX 5090)
+
+[Ornith-1.0](https://huggingface.co/deepreinforce-ai) is DeepReinforce's agentic-coding family, post-trained on Qwen 3.5 with RL that learns its own task scaffolds. Two sizes fit a 32 GB card: the **9B dense** (`qwen35`) and the **35B MoE** (`qwen35moe`, 34.7B total / ~3B active per token). Both are reasoning models — they emit a `<think>…</think>` chain-of-thought by default. Run on Ollama 0.30.11, driver 610.62, num_ctx=32768, num_batch=1024, q8_0 KV cache + flash attention, seed=42, 10 iterations. Sampling is the model-card spec (temp=0.6, top_p=0.95, top_k=20) rather than the repo default — see the caveat below. Resident VRAM from `ollama ps`; both load 100% on GPU. Modelfiles are in `modelfiles/`.
+
+| Model | Arch | Quant | Resident | Mode | Avg TPS | Avg TTFT | Total tok | Think tok |
+|-------|------|-------|----------|------|---------|----------|-----------|-----------|
+| Ornith-9B  | qwen35 dense (9B)     | Q8_0   | 10 GB | `--no-think` | 107.6 t/s     | 868 ms | 6,608  | — |
+| Ornith-9B  | qwen35 dense (9B)     | Q8_0   | 10 GB | `--think`    | 110.1 t/s     | 844 ms | 25,316 | 17,416 (69%) |
+| Ornith-35B | qwen35moe (3B active) | Q5_K_M | 24 GB | `--no-think` | **174.1 t/s** | 664 ms | 8,318  | — |
+| Ornith-35B | qwen35moe (3B active) | Q5_K_M | 24 GB | `--think`    | **177.7 t/s** | 688 ms | 28,814 | 21,176 (73%) |
+
+### Findings
+
+- **The 35B MoE is faster *and* bigger than the 9B dense — by a wide margin.** 177.7 vs 110.1 t/s (`--think`), a **+61%** throughput win, with lower TTFT (688 vs 844 ms) and a fuller-but-still-100%-GPU footprint (24 vs 10 GB). The mechanism is the one this doc keeps hitting (qwen3.6:35b-a3b, GB10): an MoE activates only ~3B of its 34.7B params per token, so it streams far fewer weight bytes per token than a 9B-dense-at-Q8, which reads all 9B every token. On a 32 GB 5090 there is no throughput reason to run the 9B — the 35B is the better model *and* the faster one. The 9B's only edge is the ~14 GB of VRAM it leaves free for co-locating other models.
+- **Quant isn't the cause — active params are.** The 35B is Q5_K_M and the 9B is Q8_0, so this isn't a clean iso-quant comparison. But the gap is far too large for the quant delta to explain: a 9B at Q5 would still read ~9B params/token vs the MoE's ~3B. The MoE active-param advantage dominates; the quant difference is second-order.
+- **Think/no-think parity holds on per-token rate, same as gemma4.** Each model generates at the same speed whether reasoning or not (9B: 110.1 vs 107.6; 35B: 177.7 vs 174.1). Thinking doesn't slow the per-token rate — it just emits far more tokens. ~69% (9B) and ~73% (35B) of all output is reasoning, so `--think` runs produce ~3.5–4× the tokens and wall-clock of `--no-think` on the same prompts (9B: 25.3K vs 6.6K tok; 35B: 28.8K vs 8.3K). The no-think TPS is the right number for cross-model rate comparison; the think token volume is the right number for sizing real agentic latency.
+- **The 35B finishes more work in less time.** Despite generating *more* total tokens in think mode (28.8K vs the 9B's 25.3K), its think pass wall-clock is 162 s vs the 9B's 230 s — a bigger reasoning workload done ~30% faster.
+- **Bandwidth framing is consistent.** The 35B at 24 GB resident reads fewer bytes/token than the 9B at 10 GB resident, because only the ~3B active experts plus shared weights move per token. That's the whole MoE story, and it lines up with the "throughput tracks bytes-streamed-per-token" thread running through the gemma4 and GB10 sections — except here the *bigger* model streams *less* per token.
+
+### Harness note: Ornith streams `<think>` inline on `/api/generate`
+
+Unlike qwen3.x — which streams reasoning in a separate `thinking` field that `ollama-test.py` already counts — the Ornith HF GGUFs emit their chain-of-thought **inline in the `response` text** on `/api/generate`, and the chat template **prefills the opening `<think>`**, so only the closing `</think>` reaches the stream. Net effect: the separate `thinking` field is empty and the think-token counter read **0** on the first runs, even though the model was clearly reasoning (and `--no-think` *did* shrink output ~4×, proving reasoning was on by default).
+
+`ollama-test.py` now recovers the split: when no `thinking`-field tokens arrive but the output contains `</think>`, it attributes the text up to the first `</think>` as thinking and prorates the server's `eval_count` by character length. `/api/chat` separates the field natively for Ornith, but the benchmark stays on `/api/generate` for comparability with the existing results, so the inline-tag recovery is what makes the Think column correct.
+
+### Caveat: sampling params differ from the repo default
+
+These four runs use the Ornith model-card sampling (temp=0.6, top_p=0.95, top_k=20), not the repo standard (temp=0.7, top_p=0.9). Sampling choice doesn't affect decode rate, so the throughput comparisons above and against other models in this doc are valid. It does affect *which* tokens are produced and total output length, so the token counts aren't strictly iso-config with the gemma/qwen runs. Re-run at the repo defaults if you need strict cross-model parity on output volume.
+
+### Bottom line
+
+On a 32 GB 5090, **`ornith-35b` (Q5_K_M) is the default** — bigger, smarter, fits 100% on GPU, and ~60% faster than the 9B thanks to MoE. Reach for `ornith-9b` (Q8_0) only when you need the VRAM headroom. Budget ~4× tokens/latency for `--think` on either; that's where the agentic-coding gains live, so keep it on for real work and reserve `--no-think` for quick chat.
+
 ## TODO
 
 - [ ] Test with `num_ctx=4096` to see if shorter context improves TPS

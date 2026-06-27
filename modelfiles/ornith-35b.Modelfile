@@ -1,0 +1,21 @@
+# Ornith-1.0-35B — agentic coding model (Qwen3.5 MoE, ~3B active params)
+#
+#   ollama create ornith-35b -f modelfiles/ornith-35b.Modelfile
+#   ollama run ornith-35b
+#
+# Q5_K_M (~24.7 GB) fits fully on a 32 GB GPU (e.g. RTX 5090). For smaller cards
+# use :Q4_K_M (~21.2 GB); below ~28 GB VRAM at this quant Ollama will offload
+# some layers to system RAM. MoE: only ~3B of 35B params run per token, so it
+# stays fast despite the size. Ollama will pull the GGUF on first `create`.
+FROM hf.co/deepreinforce-ai/Ornith-1.0-35B-GGUF:Q5_K_M
+
+# Sampling params recommended by the model card (deepreinforce-ai).
+# NOTE: ollama-test.py passes its own --temp/--top_p, which override these during
+# benchmarks; they apply when you `ollama run` / call the API without options.
+PARAMETER temperature 0.6
+PARAMETER top_p 0.95
+PARAMETER top_k 20
+
+# Native context is 262144. 32K is a safe default; raise it if you have VRAM
+# headroom. Set OLLAMA_KV_CACHE_TYPE=q8_0 to roughly halve KV-cache memory.
+PARAMETER num_ctx 32768

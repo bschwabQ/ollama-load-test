@@ -404,6 +404,18 @@ def main():
                 out_text = "".join(accum_text)
                 tokens = max(args.min_output_tokens, len(out_text.split()))
 
+            # Recover the think/answer split for reasoning models (e.g. Ornith)
+            # that stream their chain-of-thought ending in </think> on
+            # /api/generate. The opening <think> is prefilled by the chat
+            # template, so it's absent from the response; treat everything up to
+            # the first </think> as thinking and attribute tokens proportionally
+            # by character length so the total stays eval_count.
+            if thinking_tokens == 0:
+                full_text = "".join(accum_text)
+                if "</think>" in full_text and len(full_text) > 0:
+                    think_chars = len(full_text.split("</think>", 1)[0])
+                    thinking_tokens = round(tokens * think_chars / len(full_text))
+
             # Throughput
             tps = (tokens / (gen_ms / 1000.0)) if gen_ms > 0 else 0.0
 
