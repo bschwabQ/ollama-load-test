@@ -246,6 +246,23 @@ tensor hardware is the binding constraint on quantized LLMs. The model verdict i
 unchanged: `gemma4:12b-it-qat` is the right 12B here too (fastest + smallest at
 Q4 footprint), it's just running against an older wall.
 
+### Speedup sweep — f16 KV cache is the one real lever on Pascal
+
+Tried the cheap knobs against the 23.7 t/s no-think baseline (q8_0 KV, batch
+1024, ctx 8192). Each row changes one variable; all no-think, same prompts.
+
+| Config | Avg TPS | Δ | TTFT |
+|---|---|---|---|
+| baseline (q8_0 KV, batch 1024, ctx 8192) | 23.7 t/s | — | 2749 ms |
+| `--num_batch 2048` | 24.1 t/s | +1.7% | 2722 ms |
+| `--num_ctx 4096` | 23.8 t/s | +0.4% | 2717 ms |
+| **`OLLAMA_KV_CACHE_TYPE=f16`** | **25.3 t/s** | **+6.8%** | 2948 ms |
+
+- **f16 KV cache is the win, and it's a direct consequence of being compute-bound.** The repo default `q8_0` KV cache quantizes the cache to save VRAM; on Pascal every KV read then pays a dequant-compute tax, and compute is the bottleneck. Going back to `f16` removes that tax — +6.8%, with the whole TPS band shifted up cleanly (24.6–26.3 vs 23.0–24.5), not noise. The card has the VRAM to spare (7.2 GB model + f16 KV ≈ 9 GB / 11 GB at 8K). This is the *opposite* of the right call on a bandwidth-bound Blackwell card, where q8_0 KV trades cheap compute for scarce bandwidth — same setting, inverted verdict, because the binding constraint is inverted.
+- **The cost of f16 KV is context headroom and a hair of TTFT.** q8_0 KV halves cache size, so f16 gives up the ability to push toward 16–32K context on 11 GB (a non-issue at 8K). TTFT rose ~200 ms (prefill writes 2× the KV bytes) — within the run-to-run spread, but real.
+- **`num_batch 2048` is a free +1.7%** (no downside, no extra VRAM at 8K) and stacks with f16. `num_ctx 4096` does nothing for decode — confirms decode isn't context-bound at these lengths; only worth it to reclaim VRAM, which this card doesn't need.
+- **Nothing here changes the architectural ceiling.** Best free config (f16 KV + batch 2048) lands ~25–26 t/s, still ~3× off the 5060 Ti. The only real speedups remain a smaller model (`gemma4:e4b`) or newer silicon. *(Sweep on Ollama 0.30.11; committed results keep the q8_0 default for cross-card consistency.)*
+
 ## MTP / speculative decoding on Linux+CUDA — gemma4 is not supported
 
 Empirically established on Ollama 0.30.6 (CUDA, RTX 5060 Ti) by trying to wire up a draft model with `ollama create` + the Modelfile `DRAFT` directive. Three runtime facts, each from an actual error:
