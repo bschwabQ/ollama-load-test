@@ -1,0 +1,39 @@
+GPU Results: NVIDIA GeForce GTX 1080 Ti
+==================================================
+
+Hardware
+  GPU:          NVIDIA GeForce GTX 1080 Ti
+  VRAM:         11264 MiB
+  Driver:       582.66
+
+Software
+  Ollama:       0.30.11
+  Model:        qwen3.5:4b
+  Context:      8192
+  Batch size:   1024
+  Sampling:     temp=0.7, top_p=0.9, min_p=0.05, repeat_penalty=1.08, seed=42
+
+Results (10 iterations, warmup discarded)
+  Avg TPS:      43.0 t/s
+  Min TPS:      40.4 t/s
+  Max TPS:      44.6 t/s
+  Avg TTFT:     1369 ms
+  Total tokens: 40,806
+  Think tokens: 30,056
+  Total time:   970.8s
+
+Per-iteration breakdown
+    #   Tokens    Think      TPS      TTFT      Gen
+  ---  -------  -------  -------  --------  -------
+    1    2,225    1,826    43.9     1755ms    50.7s
+    2    1,493      129    44.6      771ms    33.5s
+    3    3,357    1,733    43.9     1661ms    76.5s
+    4    8,166    7,665    40.4     1909ms   202.4s
+    5    5,162    3,675    42.2     1980ms   122.2s
+    6    2,225    1,826    44.0     2006ms    50.6s
+    7    1,493      129    44.4      931ms    33.6s
+    8    3,357    1,733    43.6      816ms    77.0s
+    9    8,166    7,665    40.5      970ms   201.7s
+   10    5,162    3,675    42.1      886ms   122.6s
+
+Generated: 2026-06-28T21:18:14.120572+00:00
