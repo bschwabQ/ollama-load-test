@@ -219,6 +219,33 @@ Same upgrade re-run on the 16GB card, to see whether the ~5–7% the 5090 picked
 
 Take the upgrade — it's free and never regresses — but don't expect the 5090's ~7% on this card: a bandwidth-bound 16GB Blackwell part gets ≤2.5% and effectively nothing on q8_0. The model verdict is unchanged: default to **`gemma4:12b-it-qat`** (40.5 t/s, 7.7 GB, QAT quality), step up to **`12b-it-q8_0`** (25.8 t/s, 13 GB) only when fidelity outweighs the ~36% throughput hit. If you want the upgrade to actually pay off on a 12B, it pays off on the bigger card.
 
+## gemma4:12b-it-qat on a GTX 1080 Ti (Pascal) — bandwidth isn't the whole story
+
+First Pascal-era data point in this doc. Same `gemma4:12b-it-qat` (7.2 GB), same
+settings, on an 11 GB GTX 1080 Ti (Ollama 0.30.11). The model fits 100% on GPU.
+
+| GPU | Arch | Mem BW (approx) | qat no-think | qat think | TTFT |
+|---|---|---|---|---|---|
+| GTX 1080 Ti | Pascal (2017) | ~484 GB/s GDDR5X | **23.7 t/s** | 23.0 t/s | ~2.7–3.1 s |
+| RTX 5060 Ti 16GB | Blackwell | ~448 GB/s GDDR7 | 40.5 t/s | 40.3 t/s | ~0.7 s |
+| RTX 5090 | Blackwell | ~1792 GB/s GDDR7 | 113.4 t/s | 113.6 t/s | ~0.7 s |
+
+### Findings
+
+- **The 1080 Ti has *more* memory bandwidth than the 5060 Ti, yet runs 41% slower.** 484 vs 448 GB/s, but 23.7 vs 40.5 t/s on a byte-identical Q4 workload. That breaks the pure-bandwidth model the doc has leaned on for the Blackwell cards: on Pascal the 12B is **compute/architecture-bound, not bandwidth-bound.** Pascal has no tensor cores and no fast INT4/INT8 path, so the per-token dequant + matmul work that a 5060 Ti hides behind its memory ceiling becomes the 1080 Ti's actual ceiling. A bandwidth-ratio prediction (484/448 → ~44 t/s) overshoots by ~85%.
+- **Think parity still holds.** 23.0 t/s think vs 23.7 no-think (6,541 thinking tokens over 10 iters), same as on the Blackwell cards — thinking costs tokens (wall-clock), not per-token rate. No-think is the right cross-card number.
+- **TTFT is multi-second, not sub-second — and that's the prefill side of the same story.** ~2.7–3.1 s vs ~0.7 s on Blackwell. Pascal's weak prompt-processing throughput shows up as slow prefill, the compute-bound fingerprint applied to the prompt rather than the decode. No `⚠ TTFT dominates` warning in either mode; the run is clean. (An earlier no-think pass on 0.30.10 logged a 13.2 s avg TTFT — a one-off cold/oversubscribed GPU; the 0.30.11 re-run settled to 2.7 s.)
+
+### Bottom line (1080 Ti)
+
+A 9-year-old Pascal card still runs a 12B Q4 at a usable ~24 t/s, but it's the
+slowest tier here by a wide margin and for a different reason than the 5060 Ti:
+the 5060 Ti is bandwidth-limited, the 1080 Ti is compute/architecture-limited.
+Don't size a Pascal card by its memory bandwidth — its lack of low-precision
+tensor hardware is the binding constraint on quantized LLMs. The model verdict is
+unchanged: `gemma4:12b-it-qat` is the right 12B here too (fastest + smallest at
+Q4 footprint), it's just running against an older wall.
+
 ## MTP / speculative decoding on Linux+CUDA — gemma4 is not supported
 
 Empirically established on Ollama 0.30.6 (CUDA, RTX 5060 Ti) by trying to wire up a draft model with `ollama create` + the Modelfile `DRAFT` directive. Three runtime facts, each from an actual error:
