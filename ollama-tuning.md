@@ -291,6 +291,35 @@ want better answer *quality* and can eat the same ~2.7 s lead-in as the 12B;
 its throughput edge over 12b-qat doesn't buy responsiveness. Reserve **`12b-it-qat`**
 for when answer quality matters more than latency (general Q&A, not control).
 
+### qwen for HA on the 1080 Ti — no qwen3.6 fits; qwen3.5 prefills ~2× faster than gemma
+
+qwen is the stronger tool-caller, which is what HA device control wants. But
+**no qwen3.6 model fits an 11 GB card** — the family bottoms out at `27b` (17 GB
+Q4) and `35b-a3b` (MoE, 24 GB; all experts must be resident despite 3B active),
+nothing under 12 GB, and the nvfp4/mxfp8 small-footprint tags are Blackwell/macOS-
+gated. So the qwen option here is **qwen3.5**, which has real small sizes
+(`9b` 6.6 GB, `4b` 3.4 GB, `2b` 2.7 GB, `0.8b` 1 GB). Both 9b and 4b keep `tools`
++ `thinking`. Benchmarked on the 1080 Ti, q8_0 KV, no-think, against the gemma set:
+
+| Model | Params | Avg TPS | TTFT | tools |
+|---|---|---|---|---|
+| `gemma4:12b-it-qat` | 11.9B | 23.7 t/s | 2749 ms | ✓ |
+| `gemma4:e4b` | 8.0B | 37.4 t/s | 2697 ms | ✓ |
+| `gemma4:e2b` | 5.1B | 49.8 t/s | 1454 ms | ✓ |
+| `qwen3.5:9b` | 9.7B | 33.3 t/s | **1248 ms** | ✓ |
+| `qwen3.5:4b` | 4.7B | 45.2 t/s | **1177 ms** | ✓ |
+
+- **qwen prefills ~2× faster than gemma on this card — the headline.** `qwen3.5:9b` (9.7B) lands TTFT at 1248 ms vs gemma `e4b`'s 2697 ms at a *similar* param count, and beats even the much smaller gemma `e2b` (1454 ms). Whatever makes gemma4's prefill expensive on Pascal (heavier per-token prefill compute — larger embeddings, the vision/audio projector path) qwen3.5 doesn't pay. On a compute-bound card where TTFT *is* the prefill cost, that gap is the whole ballgame for a voice assistant.
+- **This dissolves the earlier quality-vs-latency tradeoff.** Against gemma you had to drop to the effective-2B `e2b` to get sub-1.5 s TTFT. `qwen3.5:9b` gives a *lower* TTFT than `e2b` while being a full 9.7B model and the better tool-caller — you stop trading capability for responsiveness. TPS (33 t/s) is still ~5× reading/speech speed, so the lower raw rate vs e2b is irrelevant for HA.
+- **Run qwen3.5 no-think for HA — it's a heavy reasoner.** ~27k–30k think tokens over 10 iters (≈3k per response) in think mode; in a voice loop every command would stall behind a hidden essay. The no-think numbers above are the ones that matter; think parity on rate holds (9b 31.0 think / 33.3 no-think) but the token volume does not.
+
+**HA verdict on the 1080 Ti (updated):** **`qwen3.5:9b` no-think** is the pick — best
+TTFT of any capable model here (1.25 s), strongest tool-calling, fits at 6.6 GB.
+Drop to **`qwen3.5:4b`** for a hair more speed (1.18 s, 45 t/s) if 9b's quality is
+overkill. gemma's small variants still work, but qwen's cheaper prefill makes it
+the better voice-assistant fit on this hardware. (No qwen3.6 is an option until the
+card is — a 16 GB+ card opens up `27b`/`35b-a3b`.)
+
 ## MTP / speculative decoding on Linux+CUDA — gemma4 is not supported
 
 Empirically established on Ollama 0.30.6 (CUDA, RTX 5060 Ti) by trying to wire up a draft model with `ollama create` + the Modelfile `DRAFT` directive. Three runtime facts, each from an actual error:
