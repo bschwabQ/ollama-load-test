@@ -263,6 +263,34 @@ Tried the cheap knobs against the 23.7 t/s no-think baseline (q8_0 KV, batch
 - **`num_batch 2048` is a free +1.7%** (no downside, no extra VRAM at 8K) and stacks with f16. `num_ctx 4096` does nothing for decode — confirms decode isn't context-bound at these lengths; only worth it to reclaim VRAM, which this card doesn't need.
 - **Nothing here changes the architectural ceiling.** Best free config (f16 KV + batch 2048) lands ~25–26 t/s, still ~3× off the 5060 Ti. The only real speedups remain a smaller model (`gemma4:e4b`) or newer silicon. *(Sweep on Ollama 0.30.11; committed results keep the q8_0 default for cross-card consistency.)*
 
+### Down-leveling for Home Assistant latency — e2b cuts TTFT, e4b doesn't
+
+For a voice/Home-Assistant agent the binding metric is **TTFT** (time to first
+token), not steady-state TPS — you feel the pause before the reply, and short
+command confirmations generate in ~1 s regardless. Benchmarked the smaller
+gemma4 variants on the 1080 Ti to see which actually helps that. All no-think,
+q8_0 KV, for apples-to-apples with the committed baselines. Both small variants
+keep the `tools` + `thinking` capabilities, so both can drive HA device control.
+
+| Model | Params | Avg TPS | TTFT | vs 12b-qat |
+|---|---|---|---|---|
+| `12b-it-qat` | 11.9B | 23.7 t/s | 2749 ms | baseline |
+| `e4b` | 8.0B (eff. 4B) | 37.4 t/s | 2697 ms | +58% TPS, **TTFT flat** |
+| `e2b` | 5.1B (eff. 2B) | 49.8 t/s | 1454 ms | +110% TPS, **−47% TTFT** |
+
+- **e4b is a throughput upgrade but *not* a latency upgrade — the counterintuitive part.** +58% TPS, yet TTFT is statistically unchanged (2697 vs 2749 ms). The E-series uses Per-Layer Embeddings, so e4b still streams ~8B weights and its *prefill* compute — the thing TTFT measures on this compute-bound card — lands right where the 12B does. Generation gets faster; the pause before the reply doesn't. For a voice assistant, e4b mostly doesn't move the number you actually feel.
+- **e2b is the one that cuts TTFT — nearly in half (1454 ms).** At 5.1B it finally drops below whatever prefill-compute floor pins e4b/12b at ~2.7 s, *and* it's the fastest generator (49.8 t/s). It's the only variant here that makes the assistant feel more responsive rather than just stream text faster.
+- **Think parity holds on both** (e4b 37.6 think / 37.4 no-think; e2b 48.9 / 49.8), so the numbers are clean — no `⚠ TTFT dominates` artifact.
+
+**HA recommendation for this card:** if device control + snappy voice response is
+the job, **`e2b`** is the pick — half the TTFT, double the TPS, still tool-capable —
+accepting that a ~2B-effective model is less reliable at picking the right
+entity/intent (mitigated by HA's local intent matcher handling the easy commands
+and only falling back to the LLM for fuzzy ones). Step up to **`e4b`** only if you
+want better answer *quality* and can eat the same ~2.7 s lead-in as the 12B;
+its throughput edge over 12b-qat doesn't buy responsiveness. Reserve **`12b-it-qat`**
+for when answer quality matters more than latency (general Q&A, not control).
+
 ## MTP / speculative decoding on Linux+CUDA — gemma4 is not supported
 
 Empirically established on Ollama 0.30.6 (CUDA, RTX 5060 Ti) by trying to wire up a draft model with `ollama create` + the Modelfile `DRAFT` directive. Three runtime facts, each from an actual error:
