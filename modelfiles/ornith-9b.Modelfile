@@ -3,10 +3,10 @@
 #   ollama create ornith-9b -f modelfiles/ornith-9b.Modelfile
 #   ollama run ornith-9b
 #
-# Q8_0 (~9.5 GB) is near-lossless and fits any >=12 GB GPU. For smaller cards,
-# swap the tag below to :Q5_K_M (~6.5 GB) or :Q4_K_M (~5.6 GB).
-# Ollama will pull the GGUF from Hugging Face on first `create`.
-FROM hf.co/deepreinforce-ai/Ornith-1.0-9B-GGUF:Q8_0
+# Sourced from Ollama's official library. Q8_0 (~9.5 GB) is near-lossless and
+# fits any >=12 GB GPU. Smaller: ornith:9b-q4_K_M (5.6 GB) or the bare ornith:9b
+# (Q4_K_M default). Larger: ornith:9b-bf16 (18 GB). Pulled on first `create`.
+FROM ornith:9b-q8_0
 
 # Sampling params recommended by the model card (deepreinforce-ai).
 # NOTE: ollama-test.py passes its own --temp/--top_p, which override these during

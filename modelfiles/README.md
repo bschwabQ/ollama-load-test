@@ -1,16 +1,16 @@
 # Modelfiles
 
 Reusable [Ollama Modelfiles](https://docs.ollama.com/modelfile) for models we
-benchmark in this repo. Each one pins a GGUF source, the model-card sampling
-params, and a sane default context, so anyone can reproduce the exact model the
-`results/` numbers were measured against.
+benchmark in this repo. Each one pins an [official Ollama library](https://ollama.com/library/ornith)
+source, the model-card sampling params, and a sane default context, so anyone
+can reproduce the exact model the `results/` numbers were measured against.
 
 ## Available models
 
 | Modelfile | Model | Arch | Default quant | On-GPU size | Notes |
 |-----------|-------|------|---------------|-------------|-------|
-| `ornith-9b.Modelfile`  | Ornith-1.0-9B  | Qwen3.5 dense | Q8_0   | ~9.5 GB  | Fits any ≥12 GB GPU |
-| `ornith-35b.Modelfile` | Ornith-1.0-35B | Qwen3.5 MoE (~3B active) | Q5_K_M | ~24.7 GB | Fits a 32 GB GPU; MoE so fast despite size |
+| `ornith-9b.Modelfile`  | Ornith-1.0-9B  | Qwen3.5 dense | Q8_0   | ~9.5 GB | Fits any ≥12 GB GPU |
+| `ornith-35b.Modelfile` | Ornith-1.0-35B | Qwen3.5 MoE (~3B active) | Q4_K_M | ~21 GB  | Fits a 32 GB GPU; MoE so fast despite size |
 
 ## Build
 
@@ -21,8 +21,8 @@ ollama create ornith-9b  -f modelfiles/ornith-9b.Modelfile
 ollama create ornith-35b -f modelfiles/ornith-35b.Modelfile
 ```
 
-Ollama pulls the GGUF from Hugging Face on first `create` (no separate
-`ollama pull` needed). To build everything:
+Ollama pulls from its [official library](https://ollama.com/library/ornith) on
+first `create` (no separate `ollama pull` needed). To build everything:
 
 ```bash
 for f in modelfiles/*.Modelfile; do
@@ -39,8 +39,8 @@ done
 
 ## Customizing
 
-- **Quant:** edit the `:TAG` on the `FROM` line (e.g. `:Q4_K_M` for a smaller
-  card). Available tags are listed on the model's `*-GGUF` Hugging Face repo.
+- **Quant:** swap the `FROM` line to another official tag (e.g.
+  `ornith:35b-q8_0`, `ornith:9b-q4_K_M`). All tags: ollama.com/library/ornith/tags.
 - **Context:** edit `PARAMETER num_ctx`. Native max is 262144; bigger contexts
   cost more KV-cache VRAM.
 - **Sampling:** the baked-in `temperature`/`top_p`/`top_k` are the model-card

@@ -3,11 +3,11 @@
 #   ollama create ornith-35b -f modelfiles/ornith-35b.Modelfile
 #   ollama run ornith-35b
 #
-# Q5_K_M (~24.7 GB) fits fully on a 32 GB GPU (e.g. RTX 5090). For smaller cards
-# use :Q4_K_M (~21.2 GB); below ~28 GB VRAM at this quant Ollama will offload
-# some layers to system RAM. MoE: only ~3B of 35B params run per token, so it
-# stays fast despite the size. Ollama will pull the GGUF on first `create`.
-FROM hf.co/deepreinforce-ai/Ornith-1.0-35B-GGUF:Q5_K_M
+# Sourced from Ollama's official library. The bare ornith:35b is Q4_K_M
+# (~21 GB) and fits fully on a 32 GB GPU (e.g. RTX 5090). Larger: ornith:35b-q8_0
+# (37 GB, needs CPU offload below ~40 GB VRAM). MoE: only ~3B of 35B params run
+# per token, so it stays fast despite the size. Pulled on first `create`.
+FROM ornith:35b
 
 # Sampling params recommended by the model card (deepreinforce-ai).
 # NOTE: ollama-test.py passes its own --temp/--top_p, which override these during
