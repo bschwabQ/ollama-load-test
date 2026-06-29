@@ -1,6 +1,8 @@
 # Ollama Performance Tuning
 
-Tuning notes for running Ollama on a single GPU (tested on RTX 5060 Ti 16GB VRAM).
+Tuning notes for running Ollama on a single GPU, with benchmarks across several
+cards: RTX 5090 (32GB), RTX 5060 Ti (16GB), GTX 1080 Ti (11GB), and DGX Spark
+(GB10, unified memory).
 
 ## Current Docker Setup
 
