@@ -14,26 +14,26 @@ Software
   Sampling:     temp=0.6, top_p=0.95, min_p=0.05, repeat_penalty=1.08, seed=42
 
 Results (10 iterations, warmup discarded)
-  Avg TPS:      114.3 t/s
-  Min TPS:      112.7 t/s
-  Max TPS:      115.4 t/s
-  Avg TTFT:     624 ms
-  Total tokens: 25,316
-  Think tokens: 17,416
-  Total time:   220.8s
+  Avg TPS:      122.9 t/s
+  Min TPS:      119.0 t/s
+  Max TPS:      126.7 t/s
+  Avg TTFT:     595 ms
+  Total tokens: 6,630
+  Think tokens: 2,104
+  Total time:   53.9s
 
 Per-iteration breakdown
     #   Tokens    Think      TPS      TTFT      Gen
   ---  -------  -------  -------  --------  -------
-    1    2,183    1,876   113.5      656ms    19.2s
-    2    1,164      109   113.3      603ms    10.3s
-    3    3,459    2,874   115.4      641ms    30.0s
-    4    1,611    1,296   115.1      719ms    14.0s
-    5    4,241    2,553   115.0      633ms    36.9s
-    6    2,183    1,876   113.6      664ms    19.2s
-    7    1,164      109   112.7      593ms    10.3s
-    8    3,459    2,874   115.4      573ms    30.0s
-    9    1,611    1,296   113.8      579ms    14.2s
-   10    4,241    2,553   115.4      581ms    36.8s
+    1      508      139   124.6      572ms     4.1s
+    2      602      118   126.7      541ms     4.7s
+    3      788      216   125.8      751ms     6.3s
+    4      454      151   125.5      730ms     3.6s
+    5      963      428   123.8      581ms     7.8s
+    6      508      139   119.4      605ms     4.3s
+    7      602      118   120.4      546ms     5.0s
+    8      788      216   119.0      549ms     6.6s
+    9      454      151   120.2      547ms     3.8s
+   10      963      428   123.7      532ms     7.8s
 
-Generated: 2026-06-27T15:38:34.265175+00:00
+Generated: 2026-06-29T15:55:13.410051+00:00
