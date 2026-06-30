@@ -431,6 +431,29 @@ These runs use the Ornith model-card sampling (temp=0.6, top_p=0.95, top_k=20), 
 
 On a 32 GB 5090, **`ornith:35b` (Q4_K_M) is the default** — bigger, smarter, fits 100% on GPU at 21 GB, and ~65% faster than the 9B thanks to MoE. Reach for `ornith:9b-q8_0` only when you need the VRAM headroom. Reasoning roughly doubles tokens/latency on the official package (vs ~4× on the old HF GGUF), and it's where the agentic-coding gains live — keep `--think` on for real work, use `--no-think` for quick chat.
 
+## Ornith-9B on a GTX 1080 Ti — down-level to Q4, and it out-reasons qwen3.5 per token
+
+The 5090 ran `ornith:9b-q8_0` (9.5 GB). That **does not fit an 11 GB card** alongside the KV cache, so on the 1080 Ti drop to **Q4_K_M** (`ornith:9b-q4_K_M`, 5.6 GB on disk, 6.0 GB resident at num_ctx=8192) — the same down-level-to-fit move as the gemma/qwen HA runs above. Modelfile is `modelfiles/ornith-9b-q4.Modelfile`; built model is `ornith-9b-q4`. Config matches the qwen3.5:9b 1080 Ti run for a clean same-card read: Ollama 0.30.11, driver 582.66, num_ctx=8192, num_batch=1024, q8_0 KV + flash attention, seed=42, 10 iterations, idle machine. Sampling is the **repo standard** (temp=0.7, top_p=0.9) — *not* the model-card spec the 5090 Ornith runs used — precisely so this is iso-config with qwen3.5:9b below; decode rate is sampling-independent, so the TPS comparison holds.
+
+Ornith is post-trained on Qwen 3.5, so the natural comparison is the qwen3.5:9b numbers from the HA section:
+
+| Model | Quant | VRAM | Mode | Avg TPS | TTFT | Tokens/10 | Think |
+|---|---|---|---|---|---|---|---|
+| `ornith-9b-q4` | Q4_K_M | 6.0 GB | `--no-think` | 32.4 t/s | 1288 ms | 4,240 | — |
+| `ornith-9b-q4` | Q4_K_M | 6.0 GB | `--think`    | 31.8 t/s | 1283 ms | 6,620 | **2,100 (32%)** |
+| `qwen3.5:9b`   | Q4_K_M | 6.6 GB | `--no-think` | 33.3 t/s | 1248 ms | 8,488 | — |
+| `qwen3.5:9b`   | Q4_K_M | 6.6 GB | `--think`    | 31.0 t/s | 1554 ms | 35,426 | **27,194 (77%)** |
+
+### Findings
+
+- **Throughput is qwen3.5:9b's, as expected — same architecture.** 32.4 vs 33.3 t/s no-think, 31.8 vs 31.0 t/s think; TTFT ~1.28 s, same ballpark as qwen's 1.25 s. So Ornith inherits qwen3.5's cheap Pascal prefill (the ~2× edge over gemma documented above) for free. Versus the 5090's Q8_0 122.9 t/s, the 1080 Ti lands 31.8 t/s think — ~3.9× slower, exactly the Pascal compute-bound gap seen across this doc.
+- **The real difference is reasoning length: Ornith is ~2.4× more concise per response.** In `--think`, Ornith spends **32%** of its tokens thinking (210/response) vs qwen3.5:9b's **77%** (~2,700/response — a hidden essay per turn). The RL-on-scaffolds post-training shows up as terse, targeted chains. Practically: Ornith's think mode is *usable* in a latency loop where qwen3.5:9b's is not. Same 32% think ratio as the 5090 Q8 run, so the conciseness is the model, not the quant.
+- **Q4 vs the 5090's Q8 costs accuracy, not speed.** Decode rate on Pascal is set by compute, not bytes, so Q4 isn't faster here than Q8 would be — it's just what *fits*. Q8_0 is near-lossless; Q4_K_M is the quality you trade for the 11 GB ceiling.
+
+### Bottom line (1080 Ti)
+
+`ornith:9b-q4_K_M` runs an agentic-**coding** model on an 11 GB Pascal card at ~32 t/s with ~1.3 s TTFT, and — unlike qwen3.5:9b — its `--think` mode stays short enough to leave on. It's not an HA tool-caller (that's still `qwen3.5:9b`, see above); it's the pick when you want Ornith's coding/agent behavior on this card and can't fit the Q8. Reach for the 5090's `ornith:9b-q8_0` / `ornith:35b` whenever the VRAM is there.
+
 ## TODO
 
 - [ ] Test with `num_ctx=4096` to see if shorter context improves TPS

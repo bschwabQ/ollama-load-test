@@ -9,8 +9,9 @@ can reproduce the exact model the `results/` numbers were measured against.
 
 | Modelfile | Model | Arch | Default quant | On-GPU size | Notes |
 |-----------|-------|------|---------------|-------------|-------|
-| `ornith-9b.Modelfile`  | Ornith-1.0-9B  | Qwen3.5 dense | Q8_0   | ~9.5 GB | Fits any ≥12 GB GPU |
-| `ornith-35b.Modelfile` | Ornith-1.0-35B | Qwen3.5 MoE (~3B active) | Q4_K_M | ~21 GB  | Fits a 32 GB GPU; MoE so fast despite size |
+| `ornith-9b.Modelfile`    | Ornith-1.0-9B  | Qwen3.5 dense | Q8_0   | ~9.5 GB | Fits any ≥12 GB GPU |
+| `ornith-9b-q4.Modelfile` | Ornith-1.0-9B  | Qwen3.5 dense | Q4_K_M | ~6.0 GB | Down-level of the above for 11 GB cards (GTX 1080 Ti); num_ctx 8192 |
+| `ornith-35b.Modelfile`   | Ornith-1.0-35B | Qwen3.5 MoE (~3B active) | Q4_K_M | ~21 GB  | Fits a 32 GB GPU; MoE so fast despite size |
 
 ## Build
 
