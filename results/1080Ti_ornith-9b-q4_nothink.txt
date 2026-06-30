@@ -1,0 +1,38 @@
+GPU Results: NVIDIA GeForce GTX 1080 Ti
+==================================================
+
+Hardware
+  GPU:          NVIDIA GeForce GTX 1080 Ti
+  VRAM:         11264 MiB
+  Driver:       582.66
+
+Software
+  Ollama:       0.30.11
+  Model:        ornith-9b-q4
+  Context:      8192
+  Batch size:   1024
+  Sampling:     temp=0.7, top_p=0.9, min_p=0.05, repeat_penalty=1.08, seed=42
+
+Results (10 iterations, warmup discarded)
+  Avg TPS:      32.4 t/s
+  Min TPS:      31.2 t/s
+  Max TPS:      33.1 t/s
+  Avg TTFT:     1288 ms
+  Total tokens: 4,240
+  Total time:   131.1s
+
+Per-iteration breakdown
+    #   Tokens    Think      TPS      TTFT      Gen
+  ---  -------  -------  -------  --------  -------
+    1      337        0    31.9     1571ms    10.6s
+    2      410        0    31.2      886ms    13.1s
+    3      402        0    32.7     1900ms    12.3s
+    4      260        0    33.1     1699ms     7.8s
+    5      711        0    32.8     1719ms    21.7s
+    6      337        0    32.8     1801ms    10.3s
+    7      410        0    32.1      801ms    12.8s
+    8      402        0    32.5      872ms    12.4s
+    9      260        0    32.6      788ms     8.0s
+   10      711        0    32.2      836ms    22.1s
+
+Generated: 2026-06-30T16:16:18.576572+00:00

@@ -1,0 +1,21 @@
+# Ornith-1.0-9B (Q4_K_M) — 1080 Ti / 11 GB down-level of ornith-9b.Modelfile
+#
+#   ollama create ornith-9b-q4 -f modelfiles/ornith-9b-q4.Modelfile
+#   ollama run ornith-9b-q4
+#
+# Same model as ornith-9b.Modelfile but Q4_K_M (~5.6 GB) instead of Q8_0
+# (~9.5 GB), so it fits an 11 GB card alongside the KV cache. Use this on the
+# GTX 1080 Ti; use ornith-9b.Modelfile (Q8_0) on >=12 GB GPUs.
+FROM ornith:9b-q4_K_M
+
+# Sampling params recommended by the model card (deepreinforce-ai).
+# NOTE: ollama-test.py passes its own --temp/--top_p, which override these during
+# benchmarks; they apply when you `ollama run` / call the API without options.
+PARAMETER temperature 0.6
+PARAMETER top_p 0.95
+PARAMETER top_k 20
+
+# 8192 matches the 1080 Ti qwen3.5:9b run for a clean same-card comparison
+# (Ornith is Qwen3.5-based). Native max is 262144; raise if you have VRAM
+# headroom. OLLAMA_KV_CACHE_TYPE=q8_0 roughly halves KV-cache memory.
+PARAMETER num_ctx 8192
