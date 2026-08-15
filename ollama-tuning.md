@@ -334,6 +334,8 @@ Empirically established on Ollama 0.30.6 (CUDA, RTX 5060 Ti) by trying to wire u
 
 **Conclusion:** gemma4 MTP / speculative decoding is impossible on Linux + CUDA through Ollama, for any size (12B, E4B, …), regardless of drafter source. This is the same pattern as the macOS-gated `nvfp4`/`mxfp8` tags: gemma4's accelerated paths in Ollama are consistently Apple-only, and on Linux/CUDA you get standard autoregressive inference. To actually exercise MTP speculative decoding on this card you'd have to switch model families to **qwen3.5** (the only CUDA-supported MTP base), which is a separate experiment.
 
+> **Resolved (Aug 2026).** That experiment has since been run and MTP *does* work on Linux + CUDA — see *qwen3.8:27b on RTX 5090* below. `qwen3.8:27b` reports `architecture qwen35`, satisfying the qwen3.5-base requirement, and ships MTP enabled by default (`draft_num_predict=4`) with the draft layers baked into the base GGUF — no `DRAFT` directive or separate drafter file needed. The conclusion above still holds for **gemma4**, which remains MLX-only.
+
 ### `ollama create` + DRAFT mechanics (for reference)
 
 For when a *supported* (qwen3.5) base is used:
@@ -454,8 +456,176 @@ Ornith is post-trained on Qwen 3.5, so the natural comparison is the qwen3.5:9b 
 
 `ornith:9b-q4_K_M` runs an agentic-**coding** model on an 11 GB Pascal card at ~32 t/s with ~1.3 s TTFT, and — unlike qwen3.5:9b — its `--think` mode stays short enough to leave on. It's not an HA tool-caller (that's still `qwen3.5:9b`, see above); it's the pick when you want Ornith's coding/agent behavior on this card and can't fit the Q8. Reach for the 5090's `ornith:9b-q8_0` / `ornith:35b` whenever the VRAM is there.
 
+## qwen3.8:27b on RTX 5090 — MTP speculative decoding works on CUDA
+
+The headline isn't the throughput, it's that **`qwen3.8:27b` ships MTP speculative
+decoding enabled by default and it actually runs on Linux + CUDA** — the experiment
+the MTP section above left open.
+
+### The default tag *is* the MTP build
+
+Comparing registry manifests, `qwen3.8:latest`, `:27b`, and `:27b-mtp-q4_K_M` all
+resolve to the same model digest (`sha256:f5f1dd89…`, 16.81 GB) and the same
+projector. The plain `:27b-q4_K_M` tag differs by exactly one key in a ~100-byte
+params blob:
+
+```
+27b-mtp-q4_K_M:  {"draft_num_predict":4, "min_p":0, ...}
+27b-q4_K_M:      {                       "min_p":0, ...}
+```
+
+So the MTP layers live inside the base GGUF and the tag only flips the flag. Two
+practical consequences: `ollama pull qwen3.8:27b` gets you MTP whether you asked
+for it or not, and pulling the non-MTP control costs ~92 bytes because every heavy
+blob dedupes. Check with `ollama show <model> --parameters` — if `draft_num_predict`
+is there, you're measuring speculative decoding.
+
+This also resolves the open item from the MTP section: that section concluded the
+CUDA MTP path "only accepts a qwen3.5 base" and named switching families as the
+untested way forward. `qwen3.8:27b` reports `architecture qwen35`, so it qualifies.
+
+### Results (num_ctx=8192, num_batch=1024, seed=42, 10 iterations, idle machine)
+
+Ollama 0.32.13, driver 610.88, flash attention + q8_0 KV, `KEEP_ALIVE=-1`, default
+`NUM_PARALLEL`. Repo-standard sampling (temp=0.7, top_p=0.9), *not* the model card's
+temp=1.0/top_p=0.95. Resident VRAM 17 GB, 100% GPU.
+
+| Model | Quant | VRAM | Mode | Avg TPS | Min–Max TPS | TTFT | Tokens/10 | Think |
+|---|---|---|---|---|---|---|---|---|
+| `qwen3.8:27b` | Q4_K_M | 17 GB | `--no-think` | 104.4 t/s | 84.1–133.5 | 704 ms | 8,066 | — |
+| `qwen3.8:27b` | Q4_K_M | 17 GB | `--think`    | 105.0 t/s | 84.0–128.4 | 746 ms | 14,550 | **5,170 (36%)** |
+
+### Findings
+
+- **MTP is confirmed active**, from the server's own accounting:
+  `spec common_specu: statistics draft-mtp: … #mean acc len = 2.79, #acc rate/pos = (0.730, 0.496, 0.338, 0.227)`.
+  Of 4 tokens drafted per step, ~2.8 are accepted on average. Acceptance decays
+  sharply with draft depth — 73% at position 1 down to 23% at position 4 — which is
+  why `draft_num_predict=4` is a sensible stopping point; a deeper draft would mostly
+  generate tokens that get thrown away.
+- **The wide TPS spread is the signature of speculative decoding, not noise.** Every
+  other run in this doc holds TPS within ~1-2%; here it's 84–133 t/s. But it's
+  *deterministic per prompt* — iterations 1-5 and 6-10 are the same five prompts and
+  they mirror almost exactly (133.5/132.5, 86.3/84.1, 99.9/97.6). Throughput tracks
+  how draftable each prompt's output is; per-task acceptance in the logs ranged
+  0.31–0.69. **Avg TPS is still the right summary, but min/max is no longer a
+  stability signal for MTP models** — don't read the spread as a bad run.
+- **Think costs nothing in throughput here** — 105.0 vs 104.4 t/s. Prior models in
+  this doc lose a few percent in think mode; this one doesn't.
+- **qwen3.8 reasons far more concisely than earlier qwen.** 36% of tokens are
+  thinking, vs 77% for qwen3.5:9b and ~67% for qwen3.5:35b — closer to Ornith's 32%.
+  Think mode stays cheap enough to leave on.
+- **A dense 27B landing at ~105 t/s is suspiciously good.** `gemma4:12b-it-q4_K_M`
+  — less than half the parameters — runs 109.9 t/s on this same card. Dense decode
+  is bandwidth-bound, so a 27B has no business matching a 12B. MTP is the obvious
+  explanation, but see the caveat.
+
+### Caveat: this number is not a clean baseline
+
+**The speedup is un-quantified.** These runs measure qwen3.8 *with MTP on*, and no
+control was run, so the throughput cannot be attributed to MTP with a number. Mean
+accepted length of 2.8 cuts decode steps by roughly that factor, but each step also
+pays to draft and verify 4 tokens, and the net is exactly what the control would
+measure. The 12B comparison above is a hint, not a measurement — different family,
+different architecture, different tokenizer.
+
+To close it, pull the control (~92 bytes) and re-run:
+
+```bash
+ollama pull qwen3.8:27b-q4_K_M
+OLLAMA_MODEL=qwen3.8:27b-q4_K_M python ollama-test.py --benchmark --no-think
+```
+
+Note also that these numbers are **not iso-config with the older 5090 tables** in the
+sense that matters: nothing else in this doc had speculative decoding on. Compare
+qwen3.8 against other MTP-enabled runs, or against its own control — not against the
+gemma/qwen3.5 rows.
+
+### Speedup sweep — the shipped `draft_num_predict=4` is not optimal
+
+**Single-prompt probes, not full benchmarks** — same prompt, seed=42, `num_predict=400`,
+one sample each. Directionally clear but not table-grade; validate on the full prompt
+set before quoting a number.
+
+`draft_num_predict` is settable per request (`"options":{"draft_num_predict":N}`);
+changing it forces a model reload.
+
+| depth | TPS | mean accepted len |
+|---|---|---|
+| **2** | **123.2 t/s** | 2.40 |
+| 3 | 121.3 t/s | 2.73 |
+| 4 *(shipped default)* | 115.0 t/s | 2.91 |
+| 6 | 97.3 t/s | 3.13 |
+| 8 | 96.8 t/s | 3.09 |
+
+Monotonic, and it runs opposite to intuition: deeper drafts accept *more* tokens per
+step but are *slower*. The MTP head drafts sequentially, one forward pass per drafted
+token, while verification is a single batched pass — so extra depth adds serial draft
+cost to win tokens that mostly get rejected. At depth 8 the acceptance profile is
+(0.713, 0.512, 0.333, 0.202, 0.116, 0.093, 0.070, 0.054); positions 5-8 land 5-12% of
+the time and are close to pure waste.
+
+**Depth 2 is ~7% faster than the default, for free** — speculative decoding is
+distribution-preserving, so draft depth is a pure speed knob and doesn't change output
+quality. Acceptance is strongly prompt-dependent though (0.31–0.69 across the benchmark
+set), so the optimum may shift by workload.
+
+### `num_ctx=4096` does nothing here — resolves an old TODO negatively
+
+| | depth 2 | depth 4 |
+|---|---|---|
+| `num_ctx=4096` | 123.2 t/s | 113.9 t/s |
+| `num_ctx=8192` | 122.8 t/s | 114.8 t/s |
+
+Within noise. The long-standing TODO in this doc ("reducing to 4096 can yield 5-15%")
+does **not** hold for this model: qwen3.8 carries only **16 KV layers** (hybrid
+attention), so the whole cache is 272 MiB at 8192 —
+`llama_kv_cache: size = 272.00 MiB (8192 cells, 16 layers), K (q8_0): 136.00 MiB, V (q8_0): 136.00 MiB`.
+Halving a 272 MiB cache changes nothing. The 5-15% claim came from models with a full
+KV stack; it doesn't generalize.
+
+### MTP inverts the usual decode bottleneck
+
+Under sustained single-stream decode this card pulls **532 W of a 575 W cap** at
+2760/3090 MHz SM and 84% utilization, at only 56 °C — power-throttled, not thermally
+throttled. Dense decode is normally bandwidth-bound and power-cheap; MTP trades memory
+reads for batched verification compute and pushes it into compute/power-bound territory.
+
+That reframing explains the rest of this section: it's why a dense 27B keeps pace with a
+dense 12B, why draft depth and the power cap are live levers, and why KV *size* isn't.
+It also suggests **f16 KV on the target is worth testing** — the 1080 Ti sweep above
+found f16 KV worth +6.8% precisely because dequant costs compute on a compute-bound
+card, and the extra ~270 MiB is free against 15 GB of headroom.
+
+Raising the power cap (575 → 600 W on this part) can't be done from WSL
+(`nvidia-smi -pl` returns `Insufficient Permissions`); it needs an elevated Windows-side
+nvidia-smi or equivalent.
+
+### Other 27b tags on a 32 GB card
+
+- `27b-nvfp4` (18 GB) ships `…mediaType.tensor` layers — the MLX/safetensors shape,
+  the same fingerprint as the qwen3.6 `nvfp4`/`mxfp8` tags this doc records as
+  macOS-gated (`412: this model requires macOS`). Not verified by pull for qwen3.8,
+  but almost certainly still Apple-only.
+- `27b-q8_0` (30 GB), `27b-mxfp8` (32 GB), `27b-bf16` (56 GB) don't leave room for a
+  KV cache on 32 GB.
+- `27b-mlx`, `27b-mlx-bf16` are Apple Silicon.
+
+### Bottom line
+
+On a 32 GB 5090, `qwen3.8:27b` gives a **dense 27B at roughly dense-12B throughput**
+with sub-second TTFT, 17 GB resident, and think mode cheap enough to leave on — and
+it's the first model in this doc to exercise MTP speculative decoding on CUDA. Just
+know that the default tag has MTP on, so its numbers aren't comparable to the older
+tables here without running the control.
+
 ## TODO
 
-- [ ] Test with `num_ctx=4096` to see if shorter context improves TPS
+- [x] ~~Test with `num_ctx=4096` to see if shorter context improves TPS~~ — no effect on qwen3.8:27b (16 KV layers); may still hold for full-KV models
+- [x] ~~Check whether `draft_num_predict` is tunable per-request~~ — yes, and **shallower is faster**; depth 2 beats the shipped 4 by ~7%
 - [ ] Compare think vs no-think with current config
 - [ ] Try vLLM or TensorRT-LLM with NVFP4 qwen3.6 weights on GB10
+- [ ] **Run `qwen3.8:27b-q4_K_M` (MTP off) to quantify the speculative-decoding speedup** — ~92-byte pull, blobs dedupe
+- [ ] Re-run the full 10-iteration benchmark at `draft_num_predict=2` to turn the single-prompt probe into a table-grade number
+- [ ] Test f16 KV on the 5090 for qwen3.8 — compute-bound now, so the 1080 Ti's +6.8% logic may apply
+- [ ] Confirm by pull whether `qwen3.8:27b-nvfp4` is still macOS-gated
