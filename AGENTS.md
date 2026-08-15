@@ -42,6 +42,21 @@ For a thinking-capable model, benchmark **both** `--no-think` and `--think` so t
 results dir has both variants (this matches how gemma4 / qwen3.x are already
 recorded).
 
+## The other thing that will bite you: silent speculative decoding
+
+Some models ship **MTP speculative decoding enabled by default**, which makes their
+numbers non-comparable to every other table in this repo. Before a run:
+
+```bash
+ollama show <model> --parameters | grep draft_num_predict
+```
+
+If `draft_num_predict` is present, spec decoding is on. Confirm in the server logs
+(`docker logs ollama | grep draft-mtp`) and **say so in the results commit and the
+tuning-doc section** — don't let it get compared against non-MTP rows. `qwen3.8:27b`
+is the first such model here; `ollama-tuning.md` has the details, including that its
+shipped depth of 4 is slower than 2.
+
 ## Results
 
 Auto-written to `results/<gpu>_<model-slug>[_think|_nothink].txt`, where the model
@@ -64,13 +79,19 @@ both files for a clean schema; they're disposable.
 1. **Sanity-check the numbers.** TPS should be steady (low variance), TTFT should
    be sub-second for short prompts, and there should be no `⚠` warning. Wild
    swings or a multi-second TTFT mean something is off (usually a missing think
-   flag, or a cold/oversubscribed GPU).
+   flag, or a cold/oversubscribed GPU). **Exception: models with speculative
+   decoding enabled** (see below) legitimately show a wide TPS spread — throughput
+   tracks per-prompt draft acceptance. Check whether iterations 1-5 and 6-10 mirror
+   each other; if they do, it's prompt-driven and the run is fine.
 2. **Update `ollama-tuning.md`** if there's a finding worth recording — a results
    table for the model, a tuning observation, a quirk. Mirror the existing
    per-model / per-GPU sections.
 3. **Commit.** Convention in this repo is one commit for the results file(s) and a
-   separate commit for any script/doc changes. End commit messages with:
-   `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
+   separate commit for any script/doc changes. End commit messages with a
+   `Co-Authored-By:` trailer naming **the model actually running the session**, so
+   attribution stays accurate as models change:
+   `Co-Authored-By: Claude <model> <noreply@anthropic.com>` — e.g.
+   `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
    Only push when the user asks.
 
 ## Environment
