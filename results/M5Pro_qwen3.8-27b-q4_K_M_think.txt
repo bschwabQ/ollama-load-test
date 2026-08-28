@@ -1,0 +1,39 @@
+GPU Results: Apple M5 Pro
+==================================================
+
+Hardware
+  GPU:          Apple M5 Pro
+  VRAM:         49152 MiB
+  Driver:       macOS 26.6.2
+
+Software
+  Ollama:       0.33.1
+  Model:        qwen3.8:27b-q4_K_M
+  Context:      8192
+  Batch size:   1024
+  Sampling:     temp=0.7, top_p=0.9, min_p=0.05, repeat_penalty=1.08, seed=42
+
+Results (10 iterations, warmup discarded)
+  Avg TPS:      15.0 t/s
+  Min TPS:      14.7 t/s
+  Max TPS:      15.2 t/s
+  Avg TTFT:     405 ms
+  Total tokens: 13,394
+  Think tokens: 5,142
+  Total time:   898.8s
+
+Per-iteration breakdown
+    #   Tokens    Think      TPS      TTFT      Gen
+  ---  -------  -------  -------  --------  -------
+    1      892      509    15.2      171ms    58.8s
+    2    1,604      377    14.9      401ms   108.0s
+    3    1,226      240    14.8      427ms    83.0s
+    4      679      220    15.1      439ms    44.8s
+    5    2,296    1,225    14.8      505ms   154.7s
+    6      892      509    15.0      498ms    59.5s
+    7    1,604      377    15.0      401ms   107.1s
+    8    1,226      240    14.9      397ms    82.0s
+    9      679      220    15.2      405ms    44.8s
+   10    2,296    1,225    14.7      405ms   155.9s
+
+Generated: 2026-08-28T20:24:36.500794+00:00
