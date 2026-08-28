@@ -619,13 +619,92 @@ it's the first model in this doc to exercise MTP speculative decoding on CUDA. J
 know that the default tag has MTP on, so its numbers aren't comparable to the older
 tables here without running the control.
 
+## qwen3.8:27b on Apple Silicon (M5 Pro, 48 GB) — MTP works on Metal, and it's worth +34%
+
+First macOS entry in this doc, and it closes the control experiment the 5090 section
+left open: the same weights were run with MTP on and off on one machine, so the
+speculative-decoding speedup finally has a number.
+
+### Setup
+
+MacBook Pro, Apple M5 Pro (18 cores), 48 GB unified memory, macOS 26.6.2, Ollama
+0.33.1 running **natively — there is no Docker path on macOS**, so there is no
+`nvidia-smi` either; the harness now reads the chip from `sysctl` and reports unified
+memory as VRAM, the same way it treats the GB10.
+
+Two platform specifics worth knowing before you run:
+
+- **Flash attention is already on by default.** Ollama launches llama-server with
+  `--flash-attn auto` and the Metal backend resolves it to enabled
+  (`resolve_fused_ops: Flash Attention enabled`), so `OLLAMA_FLASH_ATTENTION=1` is a
+  no-op here rather than a lever.
+- **The menu-bar Ollama.app respawns its server if you kill it**, so it can't be
+  restarted with different env vars in place. Run a second server on another port and
+  point the harness at it — this leaves the user's app alone:
+
+```bash
+OLLAMA_HOST=127.0.0.1:11435 OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 \
+  OLLAMA_KEEP_ALIVE=-1 ollama serve &
+OLLAMA_HOST=http://127.0.0.1:11435 OLLAMA_MODEL=qwen3.8:27b \
+  python ollama-test.py --benchmark --no-think
+```
+
+### Results (num_ctx=8192, num_batch=1024, seed=42, 10 iterations, q8_0 KV, 17 GB resident)
+
+| Tag | MTP | Mode | Avg TPS | Min–Max TPS | TTFT | Tokens/10 | Think |
+|---|---|---|---|---|---|---|---|
+| `qwen3.8:27b` | **on** | `--no-think` | **20.3 t/s** | 14.3–28.6 | 439 ms | 9,920 | — |
+| `qwen3.8:27b` | **on** | `--think` | **18.4 t/s** | 14.7–23.7 | 424 ms | 14,946 | 5,184 (35%) |
+| `qwen3.8:27b-q4_K_M` | off | `--no-think` | 15.1 t/s | 14.8–15.3 | 392 ms | 8,502 | — |
+| `qwen3.8:27b-q4_K_M` | off | `--think` | 15.0 t/s | 14.7–15.2 | 405 ms | 13,394 | 5,142 (38%) |
+
+### Findings
+
+- **MTP speculative decoding runs on Metal**, not just CUDA — the same
+  `spec common_specu: adding speculative implementation 'draft-mtp'` line and the same
+  per-position accounting. First non-CUDA confirmation in this doc.
+- **The speedup is +34% no-think and +23% think** (20.3 vs 15.1, 18.4 vs 15.0),
+  measured against a control on identical weights. This answers the "un-quantified"
+  caveat in the 5090 section — though it's an Apple Silicon number, and the CUDA
+  speedup could differ.
+- **The wide TPS spread really is the signature of speculation.** One flag apart, MTP
+  swings 14.3–28.6 t/s (2×) while the control holds 14.8–15.3 t/s (3%). Both mirror
+  across the two prompt halves. The 5090 section inferred this; here it's controlled.
+- **Thinking tokens are less draftable, and that is the entire cost of think mode.**
+  Draft acceptance falls 50.5% → 42.3% and mean accepted length 3.02 → 2.69 when
+  thinking is on. So with MTP on, think costs 9% throughput (20.3 → 18.4); with MTP
+  off it costs nothing (15.1 → 15.0). Note this **disagrees with the 5090**, where
+  think was free *with MTP on* (105.0 vs 104.4) — unexplained, worth a re-check on
+  CUDA.
+- **The two tags share one weights blob.** Both loads pull
+  `sha256-f5f1dd89…`, confirming the registry-manifest finding above from the server's
+  own launch line. The MTP load allocates a **second KV cache** — 32 MiB, 1 layer,
+  f16 — alongside the model's 272 MiB / 16 layers / q8_0. That extra cache is the
+  draft head, and its absence is how you spot a control run in the logs.
+- **TTFT is sub-second, and lower than the 5090 rows** (392–439 ms vs 704–746 ms).
+  Prefill is compute-bound and a 5090 should win it outright, so this is more likely a
+  difference in fixed per-request overhead between the two stacks than a real M5 Pro
+  prefill advantage. Flagged, not explained.
+- **Memory is a non-issue at 48 GB.** 17 GB resident plus a 272 MiB KV at 8192, with
+  Metal reporting 36.9 GiB available. The 30 GB `27b-q8_0` and 32 GB `27b-mxfp8` tags
+  that don't leave KV room on a 32 GB 5090 would fit here.
+
+### Bottom line (M5 Pro)
+
+A dense 27B at **~20 t/s with MTP on** — readable, not fast, and about **5× slower than
+the same tag on a 5090** (104.4 t/s), which is what laptop-class unified-memory
+bandwidth buys. Keep the default `:27b` tag: MTP is a free +34%, and think mode is
+cheap enough to leave on if you want the reasoning.
+
 ## TODO
 
 - [x] ~~Test with `num_ctx=4096` to see if shorter context improves TPS~~ — no effect on qwen3.8:27b (16 KV layers); may still hold for full-KV models
 - [x] ~~Check whether `draft_num_predict` is tunable per-request~~ — yes, and **shallower is faster**; depth 2 beats the shipped 4 by ~7%
 - [ ] Compare think vs no-think with current config
 - [ ] Try vLLM or TensorRT-LLM with NVFP4 qwen3.6 weights on GB10
-- [ ] **Run `qwen3.8:27b-q4_K_M` (MTP off) to quantify the speculative-decoding speedup** — ~92-byte pull, blobs dedupe
+- [x] ~~**Run `qwen3.8:27b-q4_K_M` (MTP off) to quantify the speculative-decoding speedup**~~ — done on M5 Pro/Metal: **+34% no-think, +23% think**; still unmeasured on CUDA
 - [ ] Re-run the full 10-iteration benchmark at `draft_num_predict=2` to turn the single-prompt probe into a table-grade number
 - [ ] Test f16 KV on the 5090 for qwen3.8 — compute-bound now, so the 1080 Ti's +6.8% logic may apply
-- [ ] Confirm by pull whether `qwen3.8:27b-nvfp4` is still macOS-gated
+- [ ] Confirm by pull whether `qwen3.8:27b-nvfp4` is still macOS-gated — there is an Apple Silicon box now
+- [ ] Re-check think vs no-think with MTP on CUDA — Metal shows think costing 9% (draft acceptance 50.5% → 42.3%), the 5090 showed it free
+- [ ] Benchmark the Apple-only tags on the M5 Pro: `27b-mlx`, `27b-mxfp8`, `27b-nvfp4`
