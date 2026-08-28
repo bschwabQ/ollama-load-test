@@ -6,7 +6,7 @@ A continuous benchmark tool for [Ollama](https://ollama.com) models with live st
 
 - **Live progress bar** with token count, thinking token tracking, and average TPS
 - **Benchmark mode** — warmup + 10 iterations with GPU results saved to `results/`
-- **GPU auto-detection** via nvidia-smi, results named by GPU and model (e.g. `5090_gemma4-31b.txt`)
+- **GPU auto-detection** via nvidia-smi, or `sysctl` on Apple Silicon; results named by GPU and model (e.g. `5090_gemma4-31b.txt`, `M5Pro_qwen3.8-27b.txt`)
 - **Thinking token support** for reasoning models (qwen3.5, etc.)
 - **TTFT (Time To First Token)** measurement per run
 - **VRAM and model size** snapshots via the Ollama API
@@ -35,6 +35,22 @@ docker run -d \
 | `OLLAMA_FLASH_ATTENTION=1` | Reduces VRAM usage, improves throughput at longer contexts |
 | `OLLAMA_KV_CACHE_TYPE=q8_0` | Quantizes KV cache — fits larger models/contexts in VRAM |
 | `OLLAMA_KEEP_ALIVE=-1` | Keeps models loaded in VRAM indefinitely (no cold-start penalty) |
+
+## macOS Setup
+
+There is no Docker path on macOS. Ollama.app runs its own server on port 11434 and
+**respawns it if you kill it**, so to benchmark with the settings above, start a second
+server on another port and point the tool at it:
+
+```bash
+OLLAMA_HOST=127.0.0.1:11435 OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 \
+  OLLAMA_KEEP_ALIVE=-1 ollama serve &
+
+OLLAMA_HOST=http://127.0.0.1:11435 python ollama-test.py --benchmark --no-think
+```
+
+Flash attention is enabled by default on Metal, so `OLLAMA_FLASH_ATTENTION=1` is a
+no-op there. The GPU is detected via `sysctl` and unified memory is reported as VRAM.
 
 ## Quick Start
 

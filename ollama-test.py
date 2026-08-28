@@ -121,8 +121,28 @@ def gpu_info():
                 # Fall back to total system RAM, since GPU and CPU share it.
                 vram = _system_ram_mib()
     except Exception:
-        pass
+        # No nvidia-smi. On Apple Silicon the GPU is on-package and reported by
+        # sysctl instead; like the GB10 above, memory is unified with the host.
+        if sys.platform == "darwin":
+            name, vram, driver = _apple_gpu_info()
     return {"name": name, "vram_total_mib": vram, "driver": driver}
+
+
+def _apple_gpu_info():
+    """Apple Silicon: chip name from sysctl, unified memory as VRAM, macOS as driver."""
+    name, driver = "Apple Silicon", "unknown"
+    try:
+        name = subprocess.check_output(
+            ["sysctl", "-n", "machdep.cpu.brand_string"], text=True, timeout=10
+        ).strip() or name
+    except Exception:
+        pass
+    try:
+        ver = subprocess.check_output(["sw_vers", "-productVersion"], text=True, timeout=10).strip()
+        driver = f"macOS {ver}"
+    except Exception:
+        pass
+    return name, _system_ram_mib(), driver
 
 
 def _system_ram_mib():
@@ -133,6 +153,11 @@ def _system_ram_mib():
                     return int(line.split()[1]) // 1024
     except Exception:
         pass
+    try:
+        out = subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True, timeout=10).strip()
+        return int(out) // (1024 * 1024)
+    except Exception:
+        pass
     return 0
 
 
@@ -140,7 +165,7 @@ def gpu_slug(name):
     """Turn 'NVIDIA GeForce RTX 5060 Ti' into '5060Ti'."""
     # Strip common prefixes
     for prefix in ("NVIDIA GeForce RTX ", "NVIDIA GeForce GTX ", "NVIDIA GeForce ",
-                   "NVIDIA RTX ", "NVIDIA "):
+                   "NVIDIA RTX ", "NVIDIA ", "Apple "):
         if name.startswith(prefix):
             name = name[len(prefix):]
             break

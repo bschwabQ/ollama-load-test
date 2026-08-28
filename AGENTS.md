@@ -97,6 +97,18 @@ both files for a clean schema; they're disposable.
 ## Environment
 
 - Runs on WSL2 and native Linux. CUDA on WSL2 is within ~10-13% of native.
+- **macOS / Apple Silicon.** No Docker path and no `nvidia-smi`: the chip is detected
+  via `sysctl` and unified memory is reported as VRAM (`Apple M5 Pro` → slug `M5Pro`),
+  so `--gpu` isn't needed. Flash attention is already on by default, so
+  `OLLAMA_FLASH_ATTENTION=1` is a no-op there. The menu-bar Ollama.app **respawns its
+  server when you kill it**, so it can't be restarted with different env vars — start a
+  second server on another port and point `OLLAMA_HOST` at it, which also leaves the
+  user's app running:
+  ```bash
+  OLLAMA_HOST=127.0.0.1:11435 OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 \
+    OLLAMA_KEEP_ALIVE=-1 ollama serve &
+  OLLAMA_HOST=http://127.0.0.1:11435 OLLAMA_MODEL=<model> python ollama-test.py --benchmark --no-think
+  ```
 - The Ollama server is expected to run with flash attention + q8_0 KV cache +
   `KEEP_ALIVE=-1` (the docker/systemd setup is in `README.md` and
   `ollama-tuning.md`). Those settings are assumed by the recorded results.
