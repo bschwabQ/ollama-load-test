@@ -36,6 +36,10 @@ docker run -d \
 | `OLLAMA_KV_CACHE_TYPE=q8_0` | Quantizes KV cache — fits larger models/contexts in VRAM |
 | `OLLAMA_KEEP_ALIVE=-1` | Keeps models loaded in VRAM indefinitely (no cold-start penalty) |
 
+The first two are what the recorded results in `results/` depend on. `KEEP_ALIVE`
+is a convenience: it only controls unload timing, and `--benchmark` keeps the model
+hot across iterations either way, so some recorded runs were taken without it.
+
 ## macOS Setup
 
 There is no Docker path on macOS. Ollama.app runs its own server on port 11434 and

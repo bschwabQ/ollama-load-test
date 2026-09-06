@@ -1,0 +1,17 @@
+# qwen3.8:27b with MTP speculative-decoding depth 2 instead of the shipped 4
+#
+#   ollama create qwen3.8-27b-mtp2 -f modelfiles/qwen3.8-27b-mtp2.Modelfile
+#
+# qwen3.8:27b ships MTP on with draft_num_predict=4, but server-side acceptance
+# decays fast by draft position (~0.73 / 0.50 / 0.34 / 0.23 on a 5090), so
+# positions 3 and 4 mostly cost a wasted verify. This drops the draft to 2 to
+# measure whether the shallower depth is faster. See ollama-tuning.md.
+#
+# Same weights as qwen3.8:27b — the blobs dedupe, so `create` costs ~nothing.
+FROM qwen3.8:27b
+
+PARAMETER draft_num_predict 2
+
+# Matches the qwen3.8:27b benchmark rows. ollama-test.py sets num_ctx itself;
+# this is for `ollama run` / plain API parity.
+PARAMETER num_ctx 8192

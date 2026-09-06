@@ -109,9 +109,17 @@ both files for a clean schema; they're disposable.
     OLLAMA_KEEP_ALIVE=-1 ollama serve &
   OLLAMA_HOST=http://127.0.0.1:11435 OLLAMA_MODEL=<model> python ollama-test.py --benchmark --no-think
   ```
-- The Ollama server is expected to run with flash attention + q8_0 KV cache +
-  `KEEP_ALIVE=-1` (the docker/systemd setup is in `README.md` and
-  `ollama-tuning.md`). Those settings are assumed by the recorded results.
+- The Ollama server is expected to run with **flash attention + q8_0 KV cache**
+  (the docker/systemd setup is in `README.md` and `ollama-tuning.md`). Those two
+  are the ones the recorded results depend on; check them before a run, and note
+  it in the tuning doc if a run deviates.
+- **`OLLAMA_KEEP_ALIVE=-1` is recommended but not assumed.** It only controls
+  unload timing, and `--benchmark` keeps the model hot across iterations, so it
+  does not affect throughput. The 5090 box has produced results without it set.
+- **`OLLAMA_NUM_PARALLEL` is not uniform across the machines here** — the 5090
+  container runs `=2`, others run the default. It only matters for concurrent
+  requests and the benchmark is single-stream, but record the value in the tuning
+  doc section rather than assuming a standard.
 - `OLLAMA_HOST` defaults to `http://127.0.0.1:11434`. If you point it at a remote
   server, note that `nvidia-smi` still reads the *local* GPU — pass `--gpu` so the
   results file is labeled correctly (the script warns about this too).

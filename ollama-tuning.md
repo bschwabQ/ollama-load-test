@@ -486,8 +486,10 @@ untested way forward. `qwen3.8:27b` reports `architecture qwen35`, so it qualifi
 
 ### Results (num_ctx=8192, num_batch=1024, seed=42, 10 iterations, idle machine)
 
-Ollama 0.32.13, driver 610.88, flash attention + q8_0 KV, `KEEP_ALIVE=-1`, default
-`NUM_PARALLEL`. Repo-standard sampling (temp=0.7, top_p=0.9), *not* the model card's
+Ollama 0.32.13, driver 610.88, flash attention + q8_0 KV, `NUM_PARALLEL=2`, no
+`KEEP_ALIVE` set (verified against the live container in Sep 2026; an earlier
+revision of this line claimed `KEEP_ALIVE=-1` and default `NUM_PARALLEL`, which
+was wrong — neither affects single-stream throughput). Repo-standard sampling (temp=0.7, top_p=0.9), *not* the model card's
 temp=1.0/top_p=0.95. Resident VRAM 17 GB, 100% GPU.
 
 | Model | Quant | VRAM | Mode | Avg TPS | Min–Max TPS | TTFT | Tokens/10 | Think |
@@ -520,7 +522,7 @@ temp=1.0/top_p=0.95. Resident VRAM 17 GB, 100% GPU.
   is bandwidth-bound, so a 27B has no business matching a 12B. MTP is the obvious
   explanation, but see the caveat.
 
-### Caveat: this number is not a clean baseline
+### Caveat: this number is not a clean baseline — *resolved, see the round-2 section below*
 
 **The speedup is un-quantified.** These runs measure qwen3.8 *with MTP on*, and no
 control was run, so the throughput cannot be attributed to MTP with a number. Mean
@@ -529,7 +531,9 @@ pays to draft and verify 4 tokens, and the net is exactly what the control would
 measure. The 12B comparison above is a hint, not a measurement — different family,
 different architecture, different tokenizer.
 
-To close it, pull the control (~92 bytes) and re-run:
+**This was closed in Sep 2026** — the control ran, and MTP is worth **+44%** on this
+card (97.6 vs 67.6 t/s). See *qwen3.8:27b on the 5090, round 2* below for the numbers.
+The way it was closed:
 
 ```bash
 ollama pull qwen3.8:27b-q4_K_M
@@ -567,7 +571,8 @@ the time and are close to pure waste.
 
 **Depth 2 is ~7% faster than the default, for free** — speculative decoding is
 distribution-preserving, so draft depth is a pure speed knob and doesn't change output
-quality. Acceptance is strongly prompt-dependent though (0.31–0.69 across the benchmark
+quality. *(Validated on the full prompt set in round 2 below: +6.0% no-think, +4.9%
+think. The probe held up.)* Acceptance is strongly prompt-dependent though (0.31–0.69 across the benchmark
 set), so the optimum may shift by workload.
 
 ### `num_ctx=4096` does nothing here — resolves an old TODO negatively
@@ -595,7 +600,8 @@ That reframing explains the rest of this section: it's why a dense 27B keeps pac
 dense 12B, why draft depth and the power cap are live levers, and why KV *size* isn't.
 It also suggests **f16 KV on the target is worth testing** — the 1080 Ti sweep above
 found f16 KV worth +6.8% precisely because dequant costs compute on a compute-bound
-card, and the extra ~270 MiB is free against 15 GB of headroom.
+card, and the extra ~270 MiB is free against 15 GB of headroom. *(Tested in round 2
+below: the direction is right, the magnitude isn't — +2.1%, not +6.8%.)*
 
 Raising the power cap (575 → 600 W on this part) can't be done from WSL
 (`nvidia-smi -pl` returns `Insufficient Permissions`); it needs an elevated Windows-side
@@ -603,10 +609,22 @@ nvidia-smi or equivalent.
 
 ### Other 27b tags on a 32 GB card
 
-- `27b-nvfp4` (18 GB) ships `…mediaType.tensor` layers — the MLX/safetensors shape,
-  the same fingerprint as the qwen3.6 `nvfp4`/`mxfp8` tags this doc records as
-  macOS-gated (`412: this model requires macOS`). Not verified by pull for qwen3.8,
-  but almost certainly still Apple-only.
+- `27b-nvfp4` (18 GB) — **the "almost certainly Apple-only" guess was wrong, and so
+  is the workaround.** On Ollama 0.33.3 the pull succeeds on Linux/CUDA with no
+  `412`, but the model then fails at *load*, because it routes to the **MLX runner**
+  rather than llama.cpp:
+
+  ```
+  failed to load MLX dynamic library: path=/usr/lib/ollama/mlx_cuda_v13/libmlxc.so
+  Error: MLX not available: failed to load MLX dynamic library
+  ```
+
+  So an MLX-on-CUDA path now exists (`mlx_cuda_v13`) and there is an
+  `ollama-linux-amd64-mlx.tar.zst` release asset that ships `libmlxc.so` — but
+  **`ollama/ollama:latest` is not that build, and there is no `-mlx` Docker tag**
+  (Docker Hub carries only `latest` and `-rocm`). Running nvfp4 on Blackwell
+  therefore means a bare-metal MLX install, not a container swap. Untested here;
+  see the TODOs.
 - `27b-q8_0` (30 GB), `27b-mxfp8` (32 GB), `27b-bf16` (56 GB) don't leave room for a
   KV cache on 32 GB.
 - `27b-mlx`, `27b-mlx-bf16` are Apple Silicon.
@@ -696,15 +714,121 @@ the same tag on a 5090** (104.4 t/s), which is what laptop-class unified-memory
 bandwidth buys. Keep the default `:27b` tag: MTP is a free +34%, and think mode is
 cheap enough to leave on if you want the reasoning.
 
+## qwen3.8:27b on RTX 5090, round 2 — the MTP control lands: **+44%**, and depth 2 wins
+
+Re-run of the section above on a newer stack, plus the three experiments it left
+open: the MTP-off control, a table-grade `draft_num_predict=2` run, and f16 KV.
+
+### Setup
+
+| | round 1 | round 2 |
+|---|---|---|
+| Ollama | 0.32.13 | **0.33.3** |
+| NVIDIA driver | 610.88 | **616.64** |
+
+Everything else held: RTX 5090 32 GB, num_ctx=8192, num_batch=1024, seed=42, 10
+iterations, repo-standard sampling, and the same container env as round 1 —
+flash attention + q8_0 KV + `NUM_PARALLEL=2`, no `KEEP_ALIVE`. 17 GB resident.
+
+`qwen3.8-27b-mtp2` is a local `ollama create` over the same weights that sets
+`draft_num_predict 2`; see `modelfiles/qwen3.8-27b-mtp2.Modelfile`.
+
+### Results
+
+| Tag | MTP | Mode | Avg TPS | Min–Max TPS | TTFT | Tokens/10 | Think |
+|---|---|---|---|---|---|---|---|
+| `qwen3.8:27b-q4_K_M` | **off** | `--no-think` | 67.6 t/s | 66.3–68.5 | 284 ms | 9,252 | — |
+| `qwen3.8:27b-q4_K_M` | **off** | `--think` | 67.9 t/s | 66.8–68.8 | 293 ms | 14,060 | 5,104 (36%) |
+| `qwen3.8:27b` | depth 4 | `--no-think` | 97.6 t/s | 79.0–125.4 | 308 ms | 8,066 | — |
+| `qwen3.8:27b` | depth 4 | `--think` | 97.2 t/s | 76.6–118.1 | 322 ms | 14,550 | 5,170 (36%) |
+| `qwen3.8-27b-mtp2` | **depth 2** | `--no-think` | **103.5 t/s** | 87.7–124.8 | 306 ms | 7,730 | — |
+| `qwen3.8-27b-mtp2` | **depth 2** | `--think` | **102.0 t/s** | 89.8–115.4 | 311 ms | 14,350 | 4,668 (33%) |
+
+### Findings
+
+- **MTP is worth +44% on CUDA** (97.6 vs 67.6 t/s no-think; +43% think). This closes
+  the round-1 caveat. It also beats Metal's **+34%**, which fits: the 5090 is
+  compute-rich relative to its bandwidth, and MTP spends compute to save memory
+  reads, so the card with compute to burn gets more out of it.
+- **The control's spread is the proof the flag flipped.** 66.3–68.5 t/s — the tight
+  ~3% band every non-MTP run in this doc shows — against MTP's 79–125. If a "control"
+  run comes back with a wide spread, you did not actually turn MTP off.
+- **Depth 2 beats the shipped depth 4, now on the full prompt set**: +6.0% no-think
+  (103.5 vs 97.6) and +4.9% think (102.0 vs 97.2), confirming the single-prompt probe's
+  ~7%. Against the control that is **+53%**. The server's own accounting explains it:
+
+  | | mean accepted len | acceptance by draft position |
+  |---|---|---|
+  | depth 4 | 2.79 of 5 (56%) | 0.730, 0.496, 0.338, **0.227** |
+  | depth 2 | 2.33 of 3 (78%) | 0.773, 0.558 |
+
+  Depth 4 wins more tokens per verify but pays four serial draft passes to do it, and
+  positions 3–4 land under a third of the time. Note this **corrects a claim in the
+  round-1 section above**, which read the same decay curve as evidence that "4 is a
+  sensible stopping point." It isn't; 2 is better.
+- **Think is free with MTP on CUDA — the Metal result does not replicate.** 97.6 vs
+  97.2 t/s, and draft acceptance barely moves (mean 2.81 → 2.78 at depth 4). On the
+  M5 Pro think costs 9% and acceptance falls 50.5% → 42.3%. Two runs, two platforms,
+  opposite answers, still unexplained — but the CUDA side is now confirmed twice.
+- **The upgrade cost ~7% of MTP throughput.** Round 1 read 104.4 / 105.0 t/s on
+  identical output (8,066 tokens, so the workload really is matched); round 2 reads
+  97.6 / 97.2. Ollama 0.32.13 → 0.33.3 and driver 610.88 → 616.64 both moved, so it
+  can't be attributed to either without a bisect. **TTFT improved sharply in
+  exchange** — 704–746 ms down to 308–322 ms, better than the M5 Pro's 392–439 ms,
+  which retires the round-1 note that the Mac's lower TTFT was suspicious: it was a
+  stack-version artifact, not a hardware story. Switching to depth 2 more than buys
+  the 7% back.
+
+### f16 KV — real, but ~2%, not the 1080 Ti's +6.8%
+
+Run last, because it breaks iso-config with every other table here. Container
+recreated with `OLLAMA_KV_CACHE_TYPE=f16`; results are filed under a `5090-f16kv`
+slug and the container was put back to q8_0 afterwards.
+
+| Tag | MTP | Mode | q8_0 KV | f16 KV | Δ |
+|---|---|---|---|---|---|
+| `qwen3.8:27b-q4_K_M` | **off** | `--no-think` | 67.6 t/s | **69.0 t/s** | **+2.1%** |
+| `qwen3.8:27b-q4_K_M` | **off** | `--think` | 67.9 t/s | **68.8 t/s** | **+1.3%** |
+| `qwen3.8:27b` | depth 4 | `--no-think` | 97.6 t/s | 104.3 t/s | *+6.9% — see below* |
+| `qwen3.8:27b` | depth 4 | `--think` | 97.2 t/s | 98.9 t/s | *+1.7%* |
+| `qwen3.8-27b-mtp2` | depth 2 | `--no-think` | 103.5 t/s | 105.4 t/s | *+1.8%* |
+| `qwen3.8-27b-mtp2` | depth 2 | `--think` | 102.0 t/s | 102.6 t/s | *+0.6%* |
+
+**Only the control rows measure anything.** The compute-bound logic that made f16 KV
+worth +6.8% on a Pascal 1080 Ti does point the right way on Blackwell, but it lands at
++1.3–2.1%, and the KV cache is only 272 MiB at 8192 to begin with (16 KV layers), so
+there is little dequant work to save. Worth taking if you have the headroom — the extra
+~270 MiB is free against 15 GB — but it is not a lever.
+
+**Why the MTP rows are italicised: they compare two different workloads.** KV cache
+precision perturbs the numerics enough to change what the model emits — depth-4
+no-think generated 8,066 tokens under q8_0 and 9,242 under f16, same seed. MTP
+throughput tracks how draftable the output happens to be, so a changed output changes
+TPS on its own. That eye-catching +6.9% is mostly draftability luck.
+
+**Generalise this:** any A/B against an MTP-enabled model needs the MTP-off control as
+its instrument. With speculative decoding on, TPS is a function of the output, and
+anything that perturbs the output — KV precision, sampling, a quant change — silently
+moves the number for reasons that have nothing to do with what you're testing.
+
+### Bottom line (round 2)
+
+`qwen3.8:27b` on a 32 GB 5090 is a **dense 27B at ~104 t/s** if you set
+`draft_num_predict=2`, ~98 at the shipped depth 4, and ~68 with speculative decoding
+off. Think mode is free. The default tag ships MTP on, so its numbers still aren't
+comparable to the non-MTP tables in this doc — but the speedup now has a number.
+
 ## TODO
 
 - [x] ~~Test with `num_ctx=4096` to see if shorter context improves TPS~~ — no effect on qwen3.8:27b (16 KV layers); may still hold for full-KV models
 - [x] ~~Check whether `draft_num_predict` is tunable per-request~~ — yes, and **shallower is faster**; depth 2 beats the shipped 4 by ~7%
-- [ ] Compare think vs no-think with current config
+- [x] ~~Compare think vs no-think with current config~~ — done throughout; on the 5090 qwen3.8 think is free, on Metal it costs 9%
 - [ ] Try vLLM or TensorRT-LLM with NVFP4 qwen3.6 weights on GB10
-- [x] ~~**Run `qwen3.8:27b-q4_K_M` (MTP off) to quantify the speculative-decoding speedup**~~ — done on M5 Pro/Metal: **+34% no-think, +23% think**; still unmeasured on CUDA
-- [ ] Re-run the full 10-iteration benchmark at `draft_num_predict=2` to turn the single-prompt probe into a table-grade number
-- [ ] Test f16 KV on the 5090 for qwen3.8 — compute-bound now, so the 1080 Ti's +6.8% logic may apply
-- [ ] Confirm by pull whether `qwen3.8:27b-nvfp4` is still macOS-gated — there is an Apple Silicon box now
-- [ ] Re-check think vs no-think with MTP on CUDA — Metal shows think costing 9% (draft acceptance 50.5% → 42.3%), the 5090 showed it free
+- [x] ~~**Run `qwen3.8:27b-q4_K_M` (MTP off) to quantify the speculative-decoding speedup**~~ — done on both: Metal **+34% no-think / +23% think**, CUDA **+44% / +43%**
+- [x] ~~Re-run the full 10-iteration benchmark at `draft_num_predict=2`~~ — table-grade now: **+6.0% no-think, +4.9% think** over the shipped depth 4 (`modelfiles/qwen3.8-27b-mtp2.Modelfile`)
+- [x] ~~Test f16 KV on the 5090 for qwen3.8~~ — the logic holds but the size doesn't: **+2.1% no-think / +1.3% think** on the control, not +6.8%
+- [x] ~~Confirm by pull whether `qwen3.8:27b-nvfp4` is still macOS-gated~~ — it is not; the pull succeeds on CUDA. It fails at *load* instead, needing an MLX runtime the Docker image doesn't ship
+- [ ] Run `qwen3.8:27b-nvfp4` on the 5090 via the bare-metal `ollama-linux-amd64-mlx` build — there is no `-mlx` Docker tag, so this means leaving the container path
+- [x] ~~Re-check think vs no-think with MTP on CUDA~~ — confirmed free a second time (97.6 vs 97.2 t/s, acceptance 2.81 → 2.78). The CUDA/Metal disagreement is real and still unexplained
+- [ ] Bisect the ~7% MTP throughput drop between Ollama 0.32.13/driver 610.88 and 0.33.3/616.64 — both moved together, so neither is convicted
 - [ ] Benchmark the Apple-only tags on the M5 Pro: `27b-mlx`, `27b-mxfp8`, `27b-nvfp4`
