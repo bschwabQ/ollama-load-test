@@ -92,6 +92,14 @@ both files for a clean schema; they're disposable.
    attribution stays accurate as models change:
    `Co-Authored-By: Claude <model> <noreply@anthropic.com>` — e.g.
    `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
+
+   **That trailer is the only one. This repo is public — never add a
+   `Claude-Session:` line, or any other `claude.ai/code/session_*` URL, to a commit
+   message or PR description here.** Some harnesses inject one automatically; drop
+   it. A session URL points at a private transcript from a permanently public,
+   archivable record, and removing one after the fact costs a history rewrite and a
+   force-push — done once already on 2026-09-08 for 8 commits.
+
    Only push when the user asks.
 
 ## Environment
