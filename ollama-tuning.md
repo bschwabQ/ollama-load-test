@@ -818,6 +818,94 @@ moves the number for reasons that have nothing to do with what you're testing.
 off. Think mode is free. The default tag ships MTP on, so its numbers still aren't
 comparable to the non-MTP tables in this doc — but the speedup now has a number.
 
+## The MLX runner on M5 Pro — the biggest single lever in this doc: **+67% dense, 4.1x on MoE**
+
+Closes the "benchmark the Apple-only tags" TODO. Ollama.app ships a **second inference
+engine** for Apple Silicon alongside llama.cpp, and the `-mlx` / `-nvfp4` tags select it
+automatically. There is no separate install and no different CLI — `ollama run` picks the
+runner from the tag:
+
+```
+msg="starting mlx runner subprocess" model=qwen3.8:27b-mlx port=64451
+msg="MLX engine initialized" "MLX version"=0.32.2-27-g37c26e5 device=gpu
+path=/Applications/Ollama.app/Contents/Resources/mlx_metal_v4/
+```
+
+This matters for reading outside benchmarks: "MLX vs Ollama" comparisons are a category
+error on macOS. MLX *is* Ollama here. The real comparison is llama.cpp-vs-MLX under one CLI.
+
+### Setup
+
+Same machine and protocol as the M5 Pro section above — MacBook Pro, M5 Pro 18-core,
+48 GB, macOS 26.6.2, second server on `:11435`, q8_0 KV, num_ctx=8192, num_batch=1024,
+seed=42, 10 iterations + discarded warmup, `--no-think`. **Ollama 0.33.3** (the rows above
+were 0.33.1 — see the version caveat below).
+
+### Results
+
+| Tag | Engine | Quant | Avg TPS | Min–Max | TTFT | Peak mem |
+|---|---|---|---|---|---|---|
+| `qwen3.8:27b-q4_K_M` | llama.cpp | Q4_K_M | 15.1 | 14.8–15.3 | 392 ms | ~17 GB |
+| `qwen3.8:27b` (MTP d4) | llama.cpp | Q4_K_M | 20.3 | 14.3–28.6 | 439 ms | ~17 GB |
+| **`qwen3.8:27b-mlx`** | **MLX** | nvfp4 | **34.0** | 29.4–38.7 | 340 ms | 23.33 GiB |
+| **`qwen3.6:35b-a3b-nvfp4`** | **MLX** | nvfp4 | **82.8** | 72.6–94.1 | **195 ms** | 23.68 GiB |
+
+### Findings
+
+- **MLX beats llama.cpp+MTP by +67% on the same dense model** (34.0 vs 20.3), and +125%
+  over the MTP-off control. The cleanest way to state it: **MLX's worst iteration
+  (29.4 t/s) beats llama.cpp-MTP's best (28.6 t/s).** TTFT also improves 23%.
+
+- **MLX speculates, and it tunes draft depth adaptively** — which independently rediscovers
+  this doc's round-2 CUDA finding. `speculate_stats.go` reports `avg_draft=2.00`,
+  `max_draft=3`, acceptance 0.55–0.86 on the dense model. The scheduler converges on
+  **depth 2**, exactly the depth that beat the shipped depth 4 by hand on the 5090. It gets
+  there per-request instead of per-Modelfile.
+
+- **Why MLX converts acceptance into throughput where llama.cpp did not.** The M5 Pro
+  section concluded MTP underdelivered (1.34x) because Metal verification is
+  compute-limited. MLX apparently makes the batched verify pass cheap enough that the
+  acceptance actually cashes in. Same silicon, same weights class, different kernels.
+
+- **On MoE, the controller correctly turns speculation OFF.** `avg_draft` collapses to
+  `0.06 / 0.00 / 0.41 / 1.00 / 0.45` versus a steady `2.00` on dense — and it still hits
+  82.8 t/s. This is the right call, not a bug: an MoE reading ~3B active params per token
+  has already removed the bandwidth pressure speculation exists to relieve, so drafting is
+  pure overhead. **Speculative decoding and MoE do not compound; MoE makes speculation
+  pointless.**
+
+- **The MoE number is a near-perfect bandwidth result.** ~3B active at nvfp4 plus shared
+  and attention layers is ~3.7 GB/token; 307 GB/s ÷ 3.7 GB = ~83 t/s. Measured 82.8 —
+  about **95% of the effective ceiling**, pure autoregressive. Compare the dense MLX row,
+  which at 19.4 GB resident has a 15.8 t/s autoregressive ceiling and reaches 34.0 t/s
+  (215%) only because speculation amortizes the weight read.
+
+- **Peak memory is much higher than load size, and it is the number that matters for
+  sizing.** The dense model loads at 18.11 GiB but peaks at **23.33 GiB** under 8K
+  context — a +5.2 GiB working set. The MoE loads ~22 GiB and peaks at 23.68 GiB (only
+  +1.7 GiB, consistent with speculation being off, so no draft buffers). **Both land near
+  23.5 GiB at just 8K.** A 32 GB machine (~24.9 GiB to Metal) would have ~1.2 GiB left and
+  could not go to longer contexts.
+
+- **nvfp4 is not Q4_K_M.** Every MLX row here is a different quantization from the
+  llama.cpp rows, so these are engine *and* format comparisons. Speed is measured; output
+  quality is not. Worth a quality pass before adopting nvfp4 for real work.
+
+- **Version caveat.** These rows are Ollama 0.33.3; the llama.cpp M5 Pro rows above are
+  0.33.1. This doc has already documented a ~7% throughput swing across one version bump,
+  so treat the dense MLX-vs-MTP delta as ±7%. It is far too large a gap to be explained
+  by version drift, but it is not perfectly iso-config.
+
+### Bottom line (Apple Silicon)
+
+On an M5 Pro, **use the MLX tags.** `qwen3.6:35b-a3b-nvfp4` is the throughput default at
+**82.8 t/s and 195 ms TTFT** — 4.1x the llama.cpp default tag, and it puts a 48 GB laptop
+at **58% of a 5090** (142.4 t/s on the same model family) rather than the 5x deficit the
+dense llama.cpp path shows. If you need the newer qwen3.8 generation, `27b-mlx` at 34.0 t/s
+is still +67% over `:27b`. The catch is that the fast MoE is a generation older (qwen3.6),
+so the choice is throughput vs model generation, not throughput vs nothing.
+
+
 ## TODO
 
 - [x] ~~Test with `num_ctx=4096` to see if shorter context improves TPS~~ — no effect on qwen3.8:27b (16 KV layers); may still hold for full-KV models
@@ -831,4 +919,6 @@ comparable to the non-MTP tables in this doc — but the speedup now has a numbe
 - [ ] Run `qwen3.8:27b-nvfp4` on the 5090 via the bare-metal `ollama-linux-amd64-mlx` build — there is no `-mlx` Docker tag, so this means leaving the container path
 - [x] ~~Re-check think vs no-think with MTP on CUDA~~ — confirmed free a second time (97.6 vs 97.2 t/s, acceptance 2.81 → 2.78). The CUDA/Metal disagreement is real and still unexplained
 - [ ] Bisect the ~7% MTP throughput drop between Ollama 0.32.13/driver 610.88 and 0.33.3/616.64 — both moved together, so neither is convicted
-- [ ] Benchmark the Apple-only tags on the M5 Pro: `27b-mlx`, `27b-mxfp8`, `27b-nvfp4`
+- [x] ~~Benchmark the Apple-only tags on the M5 Pro: `27b-mlx`, `27b-mxfp8`, `27b-nvfp4`~~ — `27b-mlx` done: it runs on a **separate MLX engine** shipped in Ollama.app and is **+67% over llama.cpp+MTP** (34.0 vs 20.3 t/s). `27b-mxfp8`/`27b-nvfp4` still unrun
+- [ ] Quality pass on nvfp4 vs Q4_K_M — the MLX speedups are all measured on a *different quantization*, and only speed was tested
+- [ ] Re-run the llama.cpp M5 Pro rows on 0.33.3 to make the MLX comparison perfectly iso-config
