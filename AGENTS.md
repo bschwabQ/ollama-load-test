@@ -70,6 +70,12 @@ params, so each file is self-describing. Keep sampling params at the script
 defaults (temp 0.7, top_p 0.9, etc.) unless you have a reason to change them —
 consistency is what makes cross-model comparison meaningful.
 
+It does **not** record how much of the model ran on the GPU, so a half-offloaded run
+looks identical to a 100%-GPU one. For a model that doesn't fit in VRAM, put the split in
+the tuning-doc section: the PROCESSOR column of `ollama ps` and the
+`load_tensors: offloaded N/M layers to GPU` line from `docker logs ollama`. MTP and
+non-MTP tags of the same weights can land on different splits, because MTP costs VRAM.
+
 `ollama_overnight.csv` / `.jsonl` are gitignored scratch logs (every iteration
 appended). If the script warns that the CSV uses an older column layout, delete
 both files for a clean schema; they're disposable.
@@ -121,6 +127,12 @@ both files for a clean schema; they're disposable.
   (the docker/systemd setup is in `README.md` and `ollama-tuning.md`). Those two
   are the ones the recorded results depend on; check them before a run, and note
   it in the tuning doc if a run deviates.
+- **Docker Desktop hosts (the 5060 Ti box): check the model mount after a reboot.** The
+  container's bind mount has come up as an empty tmpfs after a reboot (`ollama list`
+  empty, pulls landing in RAM), and once CPU-only. Before a run,
+  `docker exec ollama grep " /root/.ollama " /proc/mounts` must not say `tmpfs`, and
+  `docker logs ollama | grep "inference compute"` must say `library=CUDA`; if either is
+  off, `docker restart ollama`. Details in `ollama-tuning.md` → WSL2 Notes.
 - **`OLLAMA_KEEP_ALIVE=-1` is recommended but not assumed.** It only controls
   unload timing, and `--benchmark` keeps the model hot across iterations, so it
   does not affect throughput. The 5090 box has produced results without it set.

@@ -70,7 +70,8 @@ sudo nvidia-smi -c EXCLUSIVE_PROCESS
 ## WSL2 Notes
 
 - CUDA performance on WSL2 is within 10-13% of native Linux, gap narrows for GPU-bound workloads like LLM inference.
-- Keep model data inside WSL2's ext4 filesystem, not on `/mnt/c/` or `/mnt/f/` — the 9P bridge is 3-5x slower for I/O. This affects model loading, not inference.
+- Keep model data inside WSL2's ext4 filesystem, not on `/mnt/c/` or `/mnt/f/` — the 9P bridge is 3-5x slower for I/O. This affects model loading, not inference — except under CPU offload, where the CPU-resident weights are mmapped over 9p and page in on the first request (30 s for 4.9 GB; see the 5060 Ti qwen3.8 section).
+- **Docker Desktop: after a reboot, the model mount can come up as an empty RAM disk.** On the 5060 Ti box (Docker Desktop, WSL2 backend), the reboot for a driver update left the container's `/mnt/f/ollamadocker` bind resolved to an empty 16 GB **tmpfs** inside the Docker Desktop VM instead of the `F:` drive: `ollama list` empty, `total blobs: 0`, a fresh ssh key on every restart, and any pull landing in RAM (a model over 16 GB could not be pulled at all). One of those boot restarts also came up CPU-only (`total_vram="0 B"`). `docker restart ollama` from WSL re-resolved it to the 9p mount. Check before a run: `docker exec ollama grep " /root/.ollama " /proc/mounts` should say `9p`, not `tmpfs`, and `docker logs ollama | grep "inference compute"` should say `library=CUDA`. Likely cause is the `restart=always` autostart racing Docker Desktop's WSL drive mapping (inferred, not verified). Ollama prunes unreferenced blobs at startup, so check that before pointing it at an unfamiliar store.
 
 ## Benchmark Results (gemma4:e4b, RTX 5060 Ti, no-think, num_ctx=8192)
 
@@ -906,6 +907,102 @@ is still +67% over `:27b`. The catch is that the fast MoE is a generation older 
 so the choice is throughput vs model generation, not throughput vs nothing.
 
 
+## qwen3.8:27b on RTX 5060 Ti (16 GB) — it doesn't fit: 21–30% runs on the CPU, 6.8–9.0 t/s
+
+What qwen3.8 does on a 16 GB card. Short version: **no qwen3.8 tag fits.** Every tag on
+the library page is the 27b, and the smallest one that runs on CUDA — Q4_K_M, 16.81 GB of
+weights plus a 0.93 GB vision projector — needs ~18 GB once the KV cache and compute
+buffers are added. The rest are bigger (`q8_0` 30 GB, `bf16` 56 GB) or MLX-only (`-mlx`,
+`-nvfp4`, `-mxfp8`, which fail at load in the Docker image — see the 5090 section). So on
+this card qwen3.8 means partial CPU offload, and this section is what that costs.
+
+### Setup
+
+| | |
+|---|---|
+| GPU | RTX 5060 Ti 16 GB (16,311 MiB), PCIe 3.0 x8 (host-limited), also driving the Windows desktop (~1.1 GiB) |
+| CPU / RAM | i7-8700K (6C/12T); 4× 16 GB DDR4-2400 in dual channel = **38.4 GB/s peak**; WSL2 sees 31 GiB |
+| Driver | 616.92 (CUDA 13.4) — upgraded from 610.62 the same day |
+| Ollama | 0.33.2, Docker Desktop (WSL2 backend), models on `F:` over 9p |
+| Server env | flash attention + q8_0 KV, `KEEP_ALIVE=-1`, `NUM_PARALLEL` default (1) |
+
+num_ctx=8192, num_batch=1024, seed=42, 10 iterations + discarded warmup, repo-standard
+sampling. GPU persistence on, 180 W default power limit, no thermal or power throttling.
+`qwen3.8-27b-mtp2` is the existing depth-2 build (`modelfiles/qwen3.8-27b-mtp2.Modelfile`).
+
+### Results
+
+GPU layers are from `load_tensors: offloaded N/66 layers to GPU`; CPU weights are the
+`CPU_Mapped model buffer`. The results files record neither — they look identical to a
+100%-GPU run.
+
+| Tag | MTP | GPU layers | CPU weights | Mode | Avg TPS | Min–Max TPS | TTFT | Tokens/10 | Think |
+|---|---|---|---|---|---|---|---|---|---|
+| `qwen3.8:27b-q4_K_M` | **off** | 54/66 | 3,423 MiB | `--no-think` | 6.8 t/s | 6.6–7.0 | 1495 ms | 9,384 | — |
+| `qwen3.8:27b-q4_K_M` | **off** | 54/66 | 3,423 MiB | `--think` | 6.9 t/s | 6.8–7.0 | 1417 ms | 18,792 | 9,186 (49%) |
+| `qwen3.8:27b` | depth 4 | 47/66 | 4,927 MiB | `--no-think` | 7.5 t/s | 5.5–10.1 | 2130 ms | 10,066 | — |
+| `qwen3.8:27b` | depth 4 | 47/66 | 4,927 MiB | `--think` | 7.0 t/s | 5.6–8.8 | 1942 ms | 15,496 | 6,134 (40%) |
+| `qwen3.8-27b-mtp2` | **depth 2** | 49/66 | 4,516 MiB | `--no-think` | **9.0 t/s** | 7.8–10.4 | 1842 ms | 8,014 | — |
+| `qwen3.8-27b-mtp2` | **depth 2** | 49/66 | 4,516 MiB | `--think` | *running* | | | | |
+
+### Findings
+
+- **The CPU side is the whole story.** Per token, the control streams ~12.9 GB of weights
+  from VRAM and ~3.6 GB from system RAM. If the GPU side runs at the ~70% of peak bandwidth
+  that `gemma4:12b-it-qat` reaches on this card, it costs ~41 ms; the measured 147 ms/token
+  (6.8 t/s) leaves ~106 ms for the CPU side — ~34 GB/s, close to the 38.4 GB/s DDR4-2400
+  dual-channel peak. A fifth of the weights take three-quarters of the time. The GPU shows
+  it: 14–22% average utilization and 37–42 W of a 180 W limit, in bursts, while the
+  container holds ~600% CPU (llama-server defaults to 6 threads, one per physical core).
+  The RAM runs at its rated speed in dual channel, so there is no setting to fix — this is
+  the platform's ceiling, and faster RAM or a bigger card are the only ways past it.
+- **MTP costs VRAM, and on a card that is out of VRAM, VRAM is layers.** Ollama 0.33.2
+  launches llama-server without `-ngl` and lets its auto-fit (`common_params_fit`) place
+  layers. Raw free VRAM was 15,160 MiB at every load, but the fit's view of it shrinks for
+  the MTP builds: 15,010 MiB (off), 14,710 (depth 2), 14,410 (depth 4). MTP builds also load
+  the MTP layer (~250 MiB more weights) and a draft context (32 MiB KV, ~260 MiB compute
+  buffer at depth 4). Net: **54 → 49 → 47 layers on the GPU.** The split is deterministic —
+  every reload of a tag lands on the same count — so rows are comparable within a tag, but
+  MTP-vs-control here compares different splits as well as different decoding.
+- **Depth 2 is the only MTP setting worth using here: +20% over the shipped depth 4**
+  (9.0 vs 7.5 t/s no-think), against +6% on the 5090. A draft-and-verify step costs a flat
+  ~0.41 s at depth 4 whatever the acceptance — per-prompt mean accepted length 2.28–4.06
+  maps straight onto 5.5–10.1 t/s — and ~0.26 s at depth 2. With a quarter of the layers on
+  a 6-core CPU, verifying 5 tokens costs far more than verifying 3, and depth 2 also keeps
+  two more layers on the GPU. Net over the control: **+32% at depth 2, +10% at depth 4.**
+  Splitting depth 4's shortfall between verify cost and lost layers needs a control pinned
+  at 47 layers (TODO).
+- **Think is free; depth 4's "think cost" is draftability.** The control reads 6.8 vs
+  6.9 t/s. Depth 4 drops 7.5 → 7.0, but its mean accepted length drops with it
+  (3.13 → 2.72), and 2.72 is close to the 5090's think-mode 2.78. The outlier is this
+  card's *no-think* output: same weights, same seed, but it generated 10,066 tokens where
+  the 5090 generated 8,066 — the CPU-side layers compute slightly differently — and that
+  text happened to be more draftable. This is the round-2 warning in action, and it may be
+  what is behind the CUDA/Metal think disagreement above: not the platform, just which
+  output each run happened to produce. The control rows are the only clean think/no-think
+  instrument.
+- **Warm TTFT is 1.4–2.1 s** — prefill through the CPU layers — and higher for the MTP
+  builds, which have more of them.
+- **Cold start is much worse than warm.** The first load took 128 s (the blob is read from
+  `F:` over 9p), and the first request's prefill took **30 s** for a 27-token prompt: the
+  CPU-resident weights are mmapped from the blob on the 9p mount and page in on first
+  touch (4,927 MiB at ~170 MB/s). The benchmark warmup absorbs it; a user's first chat
+  after a load does not.
+- **The `statistics draft-mtp` line is cumulative per llama-server process** on 0.33.2,
+  not per request — two identical prompts show different values. Difference consecutive
+  lines to get per-request acceptance, and take the last line for a whole run.
+
+### Bottom line (5060 Ti)
+
+**qwen3.8 does not fit a 16 GB card in any tag.** Offloaded, it runs 6.8–9.0 t/s with
+1.4–2.1 s TTFT — 4.5–6× slower than this card on a model that fits (`gemma4:12b-it-qat`,
+40.5 t/s). If you run it here anyway, use **depth 2** (`qwen3.8-27b-mtp2`): +32% over MTP
+off and +20% over the shipped default, for free. It is fine for background work and slow
+for chat. For interactive use on 16 GB, stay with models that fit. Two untested options: a
+~13 GB 3-bit qwen3.8 GGUF would fit entirely (~20 t/s estimated, at a quality cost), and an
+MoE like `qwen3.6:35b-a3b` reads only ~3B active parameters per token, so it should
+degrade far less under offload.
+
 ## TODO
 
 - [x] ~~Test with `num_ctx=4096` to see if shorter context improves TPS~~ — no effect on qwen3.8:27b (16 KV layers); may still hold for full-KV models
@@ -922,3 +1019,6 @@ so the choice is throughput vs model generation, not throughput vs nothing.
 - [x] ~~Benchmark the Apple-only tags on the M5 Pro: `27b-mlx`, `27b-mxfp8`, `27b-nvfp4`~~ — `27b-mlx` done: it runs on a **separate MLX engine** shipped in Ollama.app and is **+67% over llama.cpp+MTP** (34.0 vs 20.3 t/s). `27b-mxfp8`/`27b-nvfp4` still unrun
 - [ ] Quality pass on nvfp4 vs Q4_K_M — the MLX speedups are all measured on a *different quantization*, and only speed was tested
 - [ ] Re-run the llama.cpp M5 Pro rows on 0.33.3 to make the MLX comparison perfectly iso-config
+- [ ] 5060 Ti: pin `num_gpu` to split MTP's two costs on a VRAM-limited card — run the control at 47 GPU layers (depth 4's split) — and see what the 0.7–1.2 GiB the auto-fit leaves free buys. Ollama 0.33.2 passes no `-ngl`, so first check that `num_gpu` still takes effect
+- [ ] 5060 Ti: re-run `gemma4:12b-it-qat` on driver 616.92 — qwen3.8 is CPU-bound on this card and can't show a driver regression
+- [ ] 5060 Ti: try a ~13 GB 3-bit qwen3.8 27B GGUF (fits entirely) and `qwen3.6:35b-a3b` under offload (MoE should degrade far less than a dense 27B)
