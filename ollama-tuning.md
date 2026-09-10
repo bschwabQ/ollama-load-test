@@ -943,19 +943,24 @@ GPU layers are from `load_tensors: offloaded N/66 layers to GPU`; CPU weights ar
 | `qwen3.8:27b` | depth 4 | 47/66 | 4,927 MiB | `--no-think` | 7.5 t/s | 5.5–10.1 | 2130 ms | 10,066 | — |
 | `qwen3.8:27b` | depth 4 | 47/66 | 4,927 MiB | `--think` | 7.0 t/s | 5.6–8.8 | 1942 ms | 15,496 | 6,134 (40%) |
 | `qwen3.8-27b-mtp2` | **depth 2** | 49/66 | 4,516 MiB | `--no-think` | **9.0 t/s** | 7.8–10.4 | 1842 ms | 8,014 | — |
-| `qwen3.8-27b-mtp2` | **depth 2** | 49/66 | 4,516 MiB | `--think` | *running* | | | | |
+| `qwen3.8-27b-mtp2` | **depth 2** | 49/66 | 4,516 MiB | `--think` | 8.3 t/s | 7.3–9.7 | 1809 ms | 14,158 | 4,636 (33%) |
+
+The `mtp2 --think` row is ±4%: iterations 6–9 ran 3–7% slower than their mirrors 1–4 on
+identical outputs, and no cause was identified (the machine is also a desktop in use).
 
 ### Findings
 
 - **The CPU side is the whole story.** Per token, the control streams ~12.9 GB of weights
-  from VRAM and ~3.6 GB from system RAM. If the GPU side runs at the ~70% of peak bandwidth
-  that `gemma4:12b-it-qat` reaches on this card, it costs ~41 ms; the measured 147 ms/token
-  (6.8 t/s) leaves ~106 ms for the CPU side — ~34 GB/s, close to the 38.4 GB/s DDR4-2400
-  dual-channel peak. A fifth of the weights take three-quarters of the time. The GPU shows
-  it: 14–22% average utilization and 37–42 W of a 180 W limit, in bursts, while the
-  container holds ~600% CPU (llama-server defaults to 6 threads, one per physical core).
-  The RAM runs at its rated speed in dual channel, so there is no setting to fix — this is
-  the platform's ceiling, and faster RAM or a bigger card are the only ways past it.
+  from VRAM and ~3.6 GB from system RAM, and the small part dominates. The GPU shows it:
+  14–22% average utilization and 37–42 W of a 180 W limit, in bursts, while the container
+  holds ~600% CPU (llama-server defaults to 6 threads, one per physical core). **Each layer
+  moved to the CPU costs ~12 ms per token** — pinning the control at 47 layers instead of
+  its default 54 takes it from 147 to 230 ms/token (see the probes below). That is about
+  twice what RAM bandwidth alone predicts (a ~215 MiB layer at the 38.4 GB/s DDR4-2400
+  dual-channel peak is ~6 ms), so the CPU side is not simply waiting on memory; six AVX2
+  cores doing Q4_K dequant and qwen3.8's hybrid-attention ops are the likely limit, though
+  that is unverified. It is not a misconfiguration: the RAM runs at its rated speed in dual
+  channel, and turning mmap off made it slower.
 - **MTP costs VRAM, and on a card that is out of VRAM, VRAM is layers.** Ollama 0.33.2
   launches llama-server without `-ngl` and lets its auto-fit (`common_params_fit`) place
   layers. Raw free VRAM was 15,160 MiB at every load, but the fit's view of it shrinks for
@@ -964,14 +969,21 @@ GPU layers are from `load_tensors: offloaded N/66 layers to GPU`; CPU weights ar
   buffer at depth 4). Net: **54 → 49 → 47 layers on the GPU.** The split is deterministic —
   every reload of a tag lands on the same count — so rows are comparable within a tag, but
   MTP-vs-control here compares different splits as well as different decoding.
+  **Pinned to the same split, speculation is worth far more than that net suggests:** the
+  control at 47 layers runs 4.35 t/s (two requests, identical), so depth 4's 7.5 t/s is
+  **~+70% at an equal split** — more than the 5090's +44%, because a depth-4 step costs 1.8×
+  a single-token pass here but yields ~3.1 tokens, amortizing the slow CPU-side pass. The
+  7 layers MTP gives up cost the control 36% (6.8 → 4.35), which is why the net is only
+  +10%. **On a VRAM-limited card, MTP pays only when it doesn't cost layers.**
 - **Depth 2 is the only MTP setting worth using here: +20% over the shipped depth 4**
   (9.0 vs 7.5 t/s no-think), against +6% on the 5090. A draft-and-verify step costs a flat
   ~0.41 s at depth 4 whatever the acceptance — per-prompt mean accepted length 2.28–4.06
   maps straight onto 5.5–10.1 t/s — and ~0.26 s at depth 2. With a quarter of the layers on
   a 6-core CPU, verifying 5 tokens costs far more than verifying 3, and depth 2 also keeps
   two more layers on the GPU. Net over the control: **+32% at depth 2, +10% at depth 4.**
-  Splitting depth 4's shortfall between verify cost and lost layers needs a control pinned
-  at 47 layers (TODO).
+  The pinned control above shows why depth 4
+  nets so little: speculation is worth ~+70% at an equal split, and the layers it gives up
+  take most of that back.
 - **Think is free; depth 4's "think cost" is draftability.** The control reads 6.8 vs
   6.9 t/s. Depth 4 drops 7.5 → 7.0, but its mean accepted length drops with it
   (3.13 → 2.72), and 2.72 is close to the 5090's think-mode 2.78. The outlier is this
@@ -981,6 +993,8 @@ GPU layers are from `load_tensors: offloaded N/66 layers to GPU`; CPU weights ar
   what is behind the CUDA/Metal think disagreement above: not the platform, just which
   output each run happened to produce. The control rows are the only clean think/no-think
   instrument.
+  Depth 2 shows the same pattern: 9.0 → 8.3 t/s as acceptance falls 2.36 → 2.24 (and that
+  row is ±4%).
 - **Warm TTFT is 1.4–2.1 s** — prefill through the CPU layers — and higher for the MTP
   builds, which have more of them.
 - **Cold start is much worse than warm.** The first load took 128 s (the blob is read from
@@ -992,12 +1006,62 @@ GPU layers are from `load_tensors: offloaded N/66 layers to GPU`; CPU weights ar
   not per request — two identical prompts show different values. Difference consecutive
   lines to get per-request acceptance, and take the last line for a whole run.
 
+### Layer-pinning probes — `num_gpu` buys up to ~+28%, by trading the vision encoder for layers
+
+**Single-prompt probes, not full benchmarks** — benchmark prompt 0, seed=42,
+`num_predict=400`, one sample each; the same caveat as the 5090 depth sweep. A different
+split changes the output, and with it the acceptance, even at the same seed, so the MTP
+rows are compared by **time per draft-and-verify step**; the last column converts that back
+to TPS at the full benchmark's average acceptance (3.13 at depth 4, 2.36 at depth 2).
+
+Ollama 0.33.2 honours `num_gpu`: it passes `-ngl`, and the auto-fit stands down
+(`n_gpu_layers already set by user ... abort`).
+
+| Build | GPU layers | CPU weights | VRAM used | Step time | TPS |
+|---|---|---|---|---|---|
+| control (MTP off) | 47, pinned | 4,927 MiB | 13,085 MiB | — | **4.35** measured (6.8 at its auto 54) |
+| depth 4 | 47, auto | 4,927 MiB | 15,049 MiB | 407 ms | 7.5 (benchmark) |
+| depth 4 | 51, pinned | 4,075 MiB | 15,006 MiB | 351 ms (−14%) | ~8.9 |
+| depth 2 | 49, auto | 4,516 MiB | 15,269 MiB | 262 ms | 9.0 (benchmark) |
+| depth 2 | 52, pinned | 3,870 MiB | 14,975 MiB | 245 ms (−6%) | ~9.6 |
+| depth 2 | **56, pinned** | 2,983 MiB | 15,715 MiB | **205 ms (−22%)** | **~11.5** |
+
+- **More layers pay, and pinning makes room for them.** Depth 2 at 56 layers is the best
+  qwen3.8 configuration found on this card: ~11.5 t/s, +28% over the auto-fit's 49 and
+  ~+70% over MTP off at its default split. It leaves ~600 MiB free; going further risks
+  the driver's system-memory fallback (below).
+- **The room comes from the vision encoder.** Under the auto-fit the log says
+  `CLIP using CUDA0 backend`; with `num_gpu` set it says `CLIP using CPU backend`, which
+  frees ~1.1 GiB (the projector plus its 248 MiB compute buffer) on top of the ~1 GiB the
+  fit already leaves free under its 1,936 MiB headroom target. Irrelevant for text, but
+  image input then encodes on the CPU — untested, and likely much slower.
+- **mmap is not the bottleneck: turning it off is 13% slower.** `use_mmap: false` loads the
+  CPU-side weights into pinned host memory (`load_mode = none`, a `CUDA_Host` buffer instead
+  of `CPU_Mapped`), and the control drops to 6.0 t/s on a prompt it runs at 6.9–7.0 with
+  mmap. Leave it on.
+- **Watch the sysmem fallback when pinning.** On Windows drivers, CUDA allocations past VRAM
+  can silently spill into system RAM over PCIe instead of failing (NVIDIA Control Panel →
+  Manage 3D Settings → CUDA - Sysmem Fallback Policy). Over this PCIe 3.0 x8 slot that would
+  be far slower than the CPU path, and it would read as a mystery slowdown. Keep
+  `nvidia-smi` memory.used well under 16,311 MiB, or set "Prefer No Sysmem Fallback" so an
+  over-pin fails loudly. None of these probes came within 600 MiB of the limit.
+
+### Driver check — 616.92 is fine
+
+qwen3.8 is CPU-bound on this card, so it can't show a driver regression. `gemma4:12b-it-qat`
+fits (7.7 GB, 100% GPU) and can: **39.7 t/s** (39.1–40.4), 420 ms TTFT, 7,909 tokens —
+against 40.5 t/s, 661 ms and 7,977 tokens on driver 610.62 / Ollama 0.30.10. That is −2% on
+a matching workload, with a better TTFT. Driver and Ollama both moved, so the −2% can't be
+pinned on either, but it rules out a real regression. The committed
+`5060Ti_gemma4-12b-it-qat_nothink.txt` stays on the old stack.
+
 ### Bottom line (5060 Ti)
 
 **qwen3.8 does not fit a 16 GB card in any tag.** Offloaded, it runs 6.8–9.0 t/s with
 1.4–2.1 s TTFT — 4.5–6× slower than this card on a model that fits (`gemma4:12b-it-qat`,
 40.5 t/s). If you run it here anyway, use **depth 2** (`qwen3.8-27b-mtp2`): +32% over MTP
-off and +20% over the shipped default, for free. It is fine for background work and slow
+off and +20% over the shipped default, for free. For text-only use, set `num_gpu 56` on top
+of it for ~11.5 t/s (probe-grade; it moves the vision encoder to the CPU). It is fine for background work and slow
 for chat. For interactive use on 16 GB, stay with models that fit. Two untested options: a
 ~13 GB 3-bit qwen3.8 GGUF would fit entirely (~20 t/s estimated, at a quality cost), and an
 MoE like `qwen3.6:35b-a3b` reads only ~3B active parameters per token, so it should
@@ -1019,6 +1083,8 @@ degrade far less under offload.
 - [x] ~~Benchmark the Apple-only tags on the M5 Pro: `27b-mlx`, `27b-mxfp8`, `27b-nvfp4`~~ — `27b-mlx` done: it runs on a **separate MLX engine** shipped in Ollama.app and is **+67% over llama.cpp+MTP** (34.0 vs 20.3 t/s). `27b-mxfp8`/`27b-nvfp4` still unrun
 - [ ] Quality pass on nvfp4 vs Q4_K_M — the MLX speedups are all measured on a *different quantization*, and only speed was tested
 - [ ] Re-run the llama.cpp M5 Pro rows on 0.33.3 to make the MLX comparison perfectly iso-config
-- [ ] 5060 Ti: pin `num_gpu` to split MTP's two costs on a VRAM-limited card — run the control at 47 GPU layers (depth 4's split) — and see what the 0.7–1.2 GiB the auto-fit leaves free buys. Ollama 0.33.2 passes no `-ngl`, so first check that `num_gpu` still takes effect
-- [ ] 5060 Ti: re-run `gemma4:12b-it-qat` on driver 616.92 — qwen3.8 is CPU-bound on this card and can't show a driver regression
+- [x] ~~5060 Ti: pin `num_gpu` to split MTP's two costs on a VRAM-limited card~~ — Ollama honours it (`-ngl`). At equal splits speculation is worth ~+70%, and the layers MTP gives up take most of it back; pinning `mtp2` at 56 layers reaches ~11.5 t/s by moving the vision encoder to the CPU
+- [x] ~~5060 Ti: re-run `gemma4:12b-it-qat` on driver 616.92~~ — 39.7 vs 40.5 t/s (−2%, with Ollama also moved); no regression
 - [ ] 5060 Ti: try a ~13 GB 3-bit qwen3.8 27B GGUF (fits entirely) and `qwen3.6:35b-a3b` under offload (MoE should degrade far less than a dense 27B)
+- [ ] 5060 Ti: validate `qwen3.8-27b-mtp2` at `num_gpu 56` on the full prompt set (only probed so far), and time image input with the vision encoder on the CPU
+- [ ] 5060 Ti: find out why a CPU-side layer costs ~12 ms/token, about twice what RAM bandwidth predicts — `num_thread` above the default 6 is the first thing to try
