@@ -1,0 +1,39 @@
+GPU Results: NVIDIA GeForce RTX 5060 Ti
+==================================================
+
+Hardware
+  GPU:          NVIDIA GeForce RTX 5060 Ti
+  VRAM:         16311 MiB
+  Driver:       616.92
+
+Software
+  Ollama:       0.33.2
+  Model:        qwen3.8-27b-mtp2
+  Context:      8192
+  Batch size:   1024
+  Sampling:     temp=0.7, top_p=0.9, min_p=0.05, repeat_penalty=1.08, seed=42
+
+Results (10 iterations, warmup discarded)
+  Avg TPS:      8.3 t/s
+  Min TPS:      7.3 t/s
+  Max TPS:      9.7 t/s
+  Avg TTFT:     1809 ms
+  Total tokens: 14,158
+  Think tokens: 4,636
+  Total time:   1704.9s
+
+Per-iteration breakdown
+    #   Tokens    Think      TPS      TTFT      Gen
+  ---  -------  -------  -------  --------  -------
+    1      894      471     8.2      982ms   108.9s
+    2    1,692      337     9.1     1858ms   184.9s
+    3    1,111      217     9.7     2099ms   114.3s
+    4      689      218     7.5     2069ms    91.4s
+    5    2,693    1,075     7.8     1966ms   345.6s
+    6      894      471     7.9     1743ms   113.3s
+    7    1,692      337     8.6     1916ms   196.3s
+    8    1,111      217     9.0     1974ms   123.9s
+    9      689      218     7.3     1756ms    94.0s
+   10    2,693    1,075     8.1     1724ms   332.4s
+
+Generated: 2026-09-10T20:58:27.828573+00:00
