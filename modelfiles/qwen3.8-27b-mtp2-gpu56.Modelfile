@@ -1,0 +1,21 @@
+# qwen3.8:27b, MTP depth 2, pinned to 56 GPU layers — the 16 GB-card build
+#
+#   ollama create qwen3.8-27b-mtp2-gpu56 -f modelfiles/qwen3.8-27b-mtp2-gpu56.Modelfile
+#
+# For a 16 GB card (RTX 5060 Ti), where no qwen3.8 tag fits and Ollama's auto-fit
+# leaves only 49 of 66 layers on the GPU for the depth-2 build. Setting num_gpu
+# makes the auto-fit stand down, and the vision encoder moves to the CPU, which
+# frees enough VRAM for 56 layers. Text-only use; image input then encodes on
+# the CPU. Assumes ~1.2 GiB of VRAM is in use by the desktop — with more than
+# that, lower num_gpu before the driver spills into system memory.
+# See ollama-tuning.md.
+#
+# Same weights as qwen3.8:27b — the blobs dedupe, so `create` costs ~nothing.
+FROM qwen3.8:27b
+
+PARAMETER draft_num_predict 2
+PARAMETER num_gpu 56
+
+# Matches the qwen3.8:27b benchmark rows. ollama-test.py sets num_ctx itself;
+# this is for `ollama run` / plain API parity.
+PARAMETER num_ctx 8192
