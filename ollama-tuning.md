@@ -1067,6 +1067,180 @@ for chat. For interactive use on 16 GB, stay with models that fit. Two untested 
 MoE like `qwen3.6:35b-a3b` reads only ~3B active parameters per token, so it should
 degrade far less under offload.
 
+## qwen3.8:27b on RTX 5060 Ti, round 2 — driver 617.42 + Ollama 0.40.1: pinned at 56 layers it does **11.8 t/s**
+
+A month later, on a new driver and a new Ollama: does anything in qwen3.8 fit 16 GB now,
+and did the upgrade move the numbers? Short version: **nothing new fits, the ranking is
+unchanged, every auto-fit row is 6–13% slower than round 1, and the pinned 56-layer build
+— only probed last time — holds up on the full prompt set at 11.8 t/s.**
+
+### Setup
+
+| | |
+|---|---|
+| GPU | RTX 5060 Ti 16 GB, same host as round 1; desktop holding ~1.2 GiB |
+| Driver | **617.42** (CUDA 13.4), from 616.92 |
+| Ollama | **0.40.1**, from 0.33.2; Docker Desktop, WSL 3.0.1 (kernel 6.18.40.1) |
+| Server env | flash attention + q8_0 KV, `KEEP_ALIVE=-1`, `NUM_PARALLEL` default (1) |
+
+num_ctx=8192, num_batch=1024, seed=42, 10 iterations + discarded warmup, repo-standard
+sampling — identical to round 1.
+
+**The library has no new tag that fits.** `qwen3.8:latest` / `:27b` was updated a week
+before this run, but only repackaged: the tag is now a manifest list (`e118e4d12a70`) that
+resolves on Linux to `aaee06c39dcf` — the same weights, projector and params blobs as
+before, plus `"runner":"llamacpp","format":"gguf"` metadata. The old manifest lives on as
+`27b-mtp-q4_K_M` (`22130167c4c2`). Still 27b only, still ≥ 17 GB.
+
+### Results
+
+All MTP rows are speculative decoding — not comparable to non-MTP tables. Round-1 numbers
+(616.92 / 0.33.2) in the last column.
+
+| Tag | MTP | GPU layers | CPU weights | Mode | Avg TPS | Min–Max TPS | TTFT | Tokens/10 | Think | Round 1 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `qwen3.8:27b-q4_K_M` | **off** | 54/66 | 3,423 MiB | `--no-think` | 6.0 t/s | 5.9–6.0 | 1799 ms | 9,206 | — | 6.8 |
+| `qwen3.8:27b-q4_K_M` | **off** | 54/66 | 3,423 MiB | `--think` | 6.0 t/s | 5.9–6.1 | 1779 ms | 14,556 | 5,180 (36%) | 6.9 |
+| `qwen3.8:27b` | depth 4 | 47/66 | 4,927 MiB | `--no-think` | 6.6 t/s | 4.9–8.7 | 2461 ms | 7,240 | — | 7.5 |
+| `qwen3.8:27b` | depth 4 | 47/66 | 4,927 MiB | `--think` | 6.6 t/s | 5.8–7.9 | 2357 ms | 14,700 | 6,446 (44%) | 7.0 |
+| `qwen3.8-27b-mtp2` | depth 2 | 49/66 | 4,516 MiB | `--no-think` | 7.8 t/s | 6.9–9.0 | 2265 ms | 8,200 | — | 9.0 |
+| `qwen3.8-27b-mtp2` | depth 2 | 49/66 | 4,516 MiB | `--think` | 7.5 t/s | 6.9–8.6 | 2272 ms | 14,088 | 5,296 (38%) | 8.3 |
+| `qwen3.8-27b-mtp2-gpu56` | depth 2 | **56/66, pinned** | 2,983 MiB | `--no-think` | **11.8 t/s** | 10.4–13.8 | 1866 ms | 9,616 | — | ~11.5 (probe) |
+| `qwen3.8-27b-mtp2-gpu56` | depth 2 | **56/66, pinned** | 2,983 MiB | `--think` | **11.6 t/s** | 10.3–12.9 | 1684 ms | 18,100 | 8,326 (46%) | — |
+
+Iterations 1–5 and 6–10 mirror each other in every row, so the MTP spread is
+prompt-driven. Mean accepted length: depth 2 2.35 / 2.26 (no-think / think), depth 4
+3.02 / 2.79, pinned depth 2 2.37 / 2.27.
+
+### Findings
+
+- **Pin `num_gpu 56` — it is worth +51% and it is now table-grade.**
+  `modelfiles/qwen3.8-27b-mtp2-gpu56.Modelfile` is depth 2 plus `PARAMETER num_gpu 56`.
+  Ollama 0.40.1 still honours it (`n_gpu_layers already set by user to 56, abort` from the
+  auto-fit), the vision encoder still moves to the CPU (`CLIP using CPU backend`), and that
+  is what makes room for 7 more layers than the auto-fit's 49. 11.8 vs 7.8 t/s no-think,
+  11.6 vs 7.5 think — and **~2× the MTP-off control** (6.0). Peak VRAM 15,650 MiB of 16,311
+  with the desktop at ~1.2 GiB, so ~660 MiB spare; the sysmem-fallback warning from round 1
+  applies, and so does the caveat that image input now encodes on the CPU (still untested).
+  TTFT also improves (1.7–1.9 s vs 2.3 s): fewer CPU layers in the prefill.
+- **The auto-fit is unchanged on 0.40.1.** Same splits as 0.33.2 on all three builds
+  (54 / 47 / 49 of 66), same fit targets (15,010 / 14,410 / 14,710 MiB), same CPU-side
+  buffer sizes. The upgrade does not buy a single layer.
+- **The ranking is unchanged:** depth 2 > shipped depth 4 > MTP off, at +30% and +10% over
+  the control (round 1: +32% and +10%). Think is still free on the control (6.0 vs 6.0).
+- **Every auto-fit row is 6–13% slower than round 1, and it is not Ollama.** Run on the
+  same day against the same model store, with Ollama 0.33.2 in a second container
+  (`ollama/ollama:0.33.2`, models mounted read-only, `OLLAMA_NOPRUNE=1`), the two round-1
+  workloads reproduce byte-for-byte (7,909 and 8,014 tokens) and isolate the pieces:
+
+  | | Round 1 (616.92 / 0.33.2) | 617.42 / 0.33.2 | 617.42 / 0.40.1 |
+  |---|---|---|---|
+  | `gemma4:12b-it-qat` no-think (100% GPU) | 39.7 t/s | **41.0** | 38.6 |
+  | `qwen3.8-27b-mtp2` no-think (49/66) | 9.0 t/s | 8.0 | 7.8 |
+
+  - **Driver 617.42 is fine:** +3% on the pure-GPU model at the same Ollama.
+  - **Ollama 0.40.1 is ~6% slower than 0.33.2 on the pure-GPU model** (38.6 vs 41.0) and
+    ~2.5% slower on the offloaded one. The 0.40.1 gemma output differs (7,019 tokens vs
+    7,909), so that 6% is not a byte-identical comparison, but TPS on this model does not
+    track output length.
+  - **The CPU-offloaded path lost 11% with Ollama held constant** (8.0 vs 9.0 on identical
+    output, identical split, identical acceptance). Not isolated: the driver's CPU↔GPU
+    handoff, or something on the CPU/WSL side that changed in a month (Windows updates, WSL
+    kernel, Docker Desktop). There is no CPU-only baseline from round 1 to split them.
+    During generation the container holds ~550% CPU and the GPU sits at ~22% / 42 W, as
+    before.
+- **A background Windows app cost another 5–7%, and looked like a regression.** The first
+  pass of this round ran with a third-party tray app ("Task Manager TMOG") holding ~50% of
+  one core and the idle GPU at 10–13% utilisation: gemma read 36.6 t/s and `mtp2` 7.3.
+  Closing it gave 38.6 and 7.8. WSL cannot see Windows processes, so check from the other
+  side before a run on this box (`powershell.exe -c "Get-Process | Sort CPU -Desc | Select
+  -First 10"`), and expect idle `nvidia-smi` utilisation of ~2%. All rows above are from
+  the clean machine.
+- **`ollama show` now lists thinking levels** for qwen3.8 (`false, low, medium, xhigh`,
+  default `medium`). `--think` here is the default level.
+
+### Bottom line (5060 Ti, round 2)
+
+Still no qwen3.8 that fits 16 GB, and the upgrade is not a speedup — on this card it is a
+small slowdown, most of it outside Ollama. What changed is the recommendation: **build
+`qwen3.8-27b-mtp2-gpu56` and run that.** 11.8 t/s is nearly twice the shipped tag's 6.6 on
+the same weights, for one Modelfile line, at the cost of CPU-side image encoding.
+
+## qwen3.5:9b on RTX 5060 Ti — the last qwen that fits 16 GB, and MTP makes Q8 as fast as Q4
+
+The follow-up to the two qwen3.8 sections above. From qwen3.6 on, the Ollama library
+publishes nothing under 27B (qwen3.6 bottoms out at `27b-q4_K_M`, 17 GB; there is no
+qwen3.7; qwen3.8 is 27b only), so **qwen3.5 is the newest qwen generation with a model
+that fits a 16 GB card**, and of its sizes the 9B is the largest that does (`27b` is
+17 GB, `35b` 22 GB). Four GGUF tags of it run on CUDA; all four fit with room to spare.
+
+Same day, same stack and settings as round 2 above: driver 617.42, Ollama 0.40.1,
+flash attention + q8_0 KV, num_ctx=8192, num_batch=1024, seed=42, 10 iterations, clean
+machine.
+
+**The MTP tags are speculative decoding and ship it on by default**
+(`draft_num_predict 2`) — not comparable to non-MTP tables. Unlike qwen3.8, whose MTP head
+lives inside the main GGUF, qwen3.5's MTP tags carry a **separate 2.43 GB draft model**
+(a `draft` layer in the manifest; `common_speculative_init_result: loading draft model`
+in the log, 34/34 layers on the GPU beside the target's 33/33).
+
+### Results
+
+VRAM is peak `nvidia-smi` memory.used during the run, **including ~1.2 GiB of desktop**.
+`ollama ps` reports 100% GPU for all four, but its SIZE column reads 2.0 GB for both MTP
+tags — it is showing something other than the full footprint, so don't size from it.
+
+| Tag | Quant | MTP | Peak VRAM | Mode | Avg TPS | Min–Max TPS | TTFT | Tokens/10 | Think |
+|---|---|---|---|---|---|---|---|---|---|
+| `qwen3.5:9b` | Q4_K_M | off | 7.7 GB | `--no-think` | 55.2 t/s | 54.3–56.1 | 595 ms | 8,044 | — |
+| `qwen3.5:9b` | Q4_K_M | off | 7.7 GB | `--think` | 55.6 t/s | 55.1–56.1 | 604 ms | 33,816 | 24,744 (73%) |
+| `qwen3.5:9b-mtp-q4_K_M` | Q4_K_M | depth 2 | 9.3 GB | `--no-think` | **65.1 t/s** | 57.0–75.1 | 610 ms | 10,572 | — |
+| `qwen3.5:9b-mtp-q4_K_M` | Q4_K_M | depth 2 | 9.3 GB | `--think` | **67.2 t/s** | 58.8–75.1 | 646 ms | 50,302 | 37,912 (75%) |
+| `qwen3.5:9b-q8_0` | Q8_0 | off | 10.9 GB | `--no-think` | 38.2 t/s | 37.9–38.6 | 596 ms | 8,250 | — |
+| `qwen3.5:9b-q8_0` | Q8_0 | off | 10.9 GB | `--think` | 38.2 t/s | 37.8–38.4 | 630 ms | 41,864 | 30,520 (73%) |
+| `qwen3.5:9b-mtp-q8_0` | Q8_0 | depth 2 | 12.6 GB | `--no-think` | 53.2 t/s | 44.7–63.1 | 639 ms | 8,596 | — |
+| `qwen3.5:9b-mtp-q8_0` | Q8_0 | depth 2 | 12.6 GB | `--think` | 56.0 t/s | 49.3–60.4 | 681 ms | 34,269 | 23,177 (68%) |
+
+Mean accepted length at depth 2: 2.19 / 2.20 (Q4, no-think / think) and 2.23 / 2.26 (Q8);
+acceptance by position ~0.70–0.73 / 0.49–0.53. The MTP spread is prompt-driven —
+iterations 1–5 and 6–10 mirror each other, with one exception: `mtp-q8_0 --think`
+iteration 6 generated 5,860 tokens against iteration 1's 5,261 on the same prompt and
+seed (58.2 vs 57.7 t/s, so the average is unaffected).
+
+### Findings
+
+- **When the model fits, MTP is simply faster: +18–21% at Q4, +39–47% at Q8.** This is the
+  case the qwen3.8 sections could not show on this card — speculation with no layers given
+  up for it. The cost is VRAM only: ~1.6 GB for the draft model and its context.
+- **MTP is worth twice as much on Q8, and that closes the Q4/Q8 gap.** Without MTP, Q8 costs
+  31% of throughput against Q4 (38.2 vs 55.2) — the bandwidth-bound signature this card
+  shows on every dense model, 9.5 GB of weights against 5.6 GB. The draft model costs the
+  same either way, but each token it saves is a more expensive token at Q8, so the same
+  ~2.2 accepted tokens per step buy +39–47% instead of +18–21%. Net:
+  **`9b-mtp-q8_0` runs at 53–56 t/s — the speed of plain Q4 (55 t/s) at Q8 fidelity.**
+- **Think is free on all four** (55.2 vs 55.6, 38.2 vs 38.2; the MTP tags read 3–5%
+  *higher* in think mode, which is draftability of the output, not a real speedup — see
+  the qwen3.8 round-2 note on think and acceptance). What think costs is tokens: qwen3.5
+  spends **68–75% of its output thinking** at the default level, 4–5× the tokens of
+  no-think for the same prompts. qwen3.8 on the same prompts spends 36–46%.
+- **Everything fits with headroom.** The largest, `9b-mtp-q8_0`, peaks at 12.6 GB with the
+  desktop included, leaving ~3.7 GB for a longer context. TTFT is ~0.6 s across the board.
+- **vs qwen3.8 on this card:** the best qwen3.8 configuration (`qwen3.8-27b-mtp2-gpu56`,
+  11.8 t/s, 1.9 s TTFT, text-only) is 4.5–5.7× slower than these. Only speed was measured
+  here — a 27B is a much stronger model than a 9B, so this is throughput vs capability, not
+  a like-for-like win.
+- The committed `5060Ti_qwen3.5-9b.txt` (50.6 t/s) is from Ollama 0.17.7 / driver 595.71
+  with num_batch=512 and no explicit think flag; it predates the think-flag rule and is not
+  comparable to these rows. The `_nothink` / `_think` files replace it for comparisons.
+
+### Bottom line (qwen on 16 GB)
+
+**Run `qwen3.5:9b-mtp-q8_0`**: 53–56 t/s, 0.6–0.7 s TTFT, Q8 weights, ~11.3 GB of VRAM,
+all on the GPU. Take `qwen3.5:9b-mtp-q4_K_M` instead if you want the last 20% of speed
+(65–67 t/s) or need the VRAM for context. Use `--no-think` (or a low think level) unless
+the task needs it — think mode quadruples the tokens per answer. If you need qwen3.8's
+capability and can live with 12 t/s, use `qwen3.8-27b-mtp2-gpu56`.
+
 ## TODO
 
 - [x] ~~Test with `num_ctx=4096` to see if shorter context improves TPS~~ — no effect on qwen3.8:27b (16 KV layers); may still hold for full-KV models
@@ -1086,5 +1260,9 @@ degrade far less under offload.
 - [x] ~~5060 Ti: pin `num_gpu` to split MTP's two costs on a VRAM-limited card~~ — Ollama honours it (`-ngl`). At equal splits speculation is worth ~+70%, and the layers MTP gives up take most of it back; pinning `mtp2` at 56 layers reaches ~11.5 t/s by moving the vision encoder to the CPU
 - [x] ~~5060 Ti: re-run `gemma4:12b-it-qat` on driver 616.92~~ — 39.7 vs 40.5 t/s (−2%, with Ollama also moved); no regression
 - [ ] 5060 Ti: try a ~13 GB 3-bit qwen3.8 27B GGUF (fits entirely) and `qwen3.6:35b-a3b` under offload (MoE should degrade far less than a dense 27B)
-- [ ] 5060 Ti: validate `qwen3.8-27b-mtp2` at `num_gpu 56` on the full prompt set (only probed so far), and time image input with the vision encoder on the CPU
+- [x] ~~5060 Ti: validate `qwen3.8-27b-mtp2` at `num_gpu 56` on the full prompt set~~ — **11.8 t/s no-think / 11.6 think** on driver 617.42 / Ollama 0.40.1 (`modelfiles/qwen3.8-27b-mtp2-gpu56.Modelfile`), +51% over the auto-fit
+- [ ] 5060 Ti: time image input on `qwen3.8-27b-mtp2-gpu56`, where the vision encoder runs on the CPU
+- [ ] 5060 Ti: find what cost the CPU-offloaded path 11% between Sept and Oct 2026 with Ollama held at 0.33.2 (driver 616.92 → 617.42, or Windows/WSL/Docker Desktop) — a CPU-only (`num_gpu 0`) baseline would split it next time
+- [ ] Check Ollama 0.40.1's ~6% pure-GPU slowdown vs 0.33.2 (gemma4:12b-it-qat, 5060 Ti) on the 5090
+- [ ] 5060 Ti: probe `num_gpu 57`/`58` on `qwen3.8-27b-mtp2` with "Prefer No Sysmem Fallback" set, and try qwen3.5:9b MTP at `draft_num_predict` 1 and 3
 - [ ] 5060 Ti: find out why a CPU-side layer costs ~12 ms/token, about twice what RAM bandwidth predicts — `num_thread` above the default 6 is the first thing to try

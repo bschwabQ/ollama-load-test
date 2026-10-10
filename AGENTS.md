@@ -133,6 +133,19 @@ both files for a clean schema; they're disposable.
   `docker exec ollama grep " /root/.ollama " /proc/mounts` must not say `tmpfs`, and
   `docker logs ollama | grep "inference compute"` must say `library=CUDA`; if either is
   off, `docker restart ollama`. Details in `ollama-tuning.md` → WSL2 Notes.
+- **The 5060 Ti box is also a Windows desktop: check the Windows side before a run.** WSL
+  can't see Windows processes. A background tray app holding half a core and 10–13% of the
+  idle GPU cost 5–7% on 2026-10-08 and read as a driver regression. Idle `nvidia-smi`
+  utilisation should be ~2%; from `/mnt/c`, `powershell.exe -NoProfile -c "Get-Process |
+  Sort CPU -Desc | Select -First 10 Name,CPU"` shows what is running. Ask the user to close
+  a hog rather than killing it.
+- **To tell an Ollama regression from a driver one, run the old Ollama beside the new.**
+  `docker run -d --name ollama-old --gpus all -p 127.0.0.1:11435:11434
+  -v <models dir>:/root/.ollama/models:ro -e OLLAMA_NOPRUNE=1 <same OLLAMA_* env>
+  ollama/ollama:<old version>`, then `OLLAMA_HOST=http://127.0.0.1:11435 ... --gpu <name>
+  --results-dir <scratch>`. Read-only plus `NOPRUNE` keeps the old server from pruning
+  blobs it doesn't recognise. Unload the main server's model first; remove the container
+  after.
 - **`OLLAMA_KEEP_ALIVE=-1` is recommended but not assumed.** It only controls
   unload timing, and `--benchmark` keeps the model hot across iterations, so it
   does not affect throughput. The 5090 box has produced results without it set.
