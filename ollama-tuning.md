@@ -1241,6 +1241,77 @@ all on the GPU. Take `qwen3.5:9b-mtp-q4_K_M` instead if you want the last 20% of
 the task needs it — think mode quadruples the tokens per answer. If you need qwen3.8's
 capability and can live with 12 t/s, use `qwen3.8-27b-mtp2-gpu56`.
 
+## RTX 5060 Ti on driver 621.01 + Ollama 0.40.7 — gemma gets +13%, qwen3.5 starts 3× sooner
+
+Twelve days after the round above, a new driver and a new Ollama. Two reference models
+re-run: the pure-GPU gemma control from the round-2 side-by-side, and the recommended
+qwen. Short version: **0.40.1's pure-GPU slowdown is gone and then some — gemma is the
+fastest it has been on this card — and qwen3.5's decode is flat but its TTFT drops ~3×.**
+
+### Setup
+
+| | |
+|---|---|
+| GPU | RTX 5060 Ti 16 GB, same host; desktop holding ~1.2 GiB |
+| Driver | **621.01** (CUDA 13.5), from 617.42 |
+| Ollama | **0.40.7**, from 0.40.1; Docker Desktop |
+| Server env | flash attention + q8_0 KV, `KEEP_ALIVE=-1`, `NUM_PARALLEL` default (1), **`OLLAMA_CONTEXT_LENGTH=32768`** |
+
+num_ctx=8192, num_batch=1024, seed=42, 10 iterations + discarded warmup, repo-standard
+sampling — identical to the rounds above. The new `CONTEXT_LENGTH` is only the server-wide
+default; the harness passes `num_ctx` per request, so it does not reach these rows. (An
+older note on this box set `OLLAMA_NUM_CTX`, which is not an Ollama variable and is
+silently ignored — `ollama serve --help` lists the real ones.)
+
+Machine not perfectly idle: the Windows Task Manager window was open (~7% of one core,
+idle GPU spiking 2–17%). Smaller than the tray app that cost 5–7% in round 2, but if
+anything it understates these numbers.
+
+### Results
+
+The qwen3.5 rows are speculative decoding (`draft_num_predict 2`) — not comparable to
+non-MTP tables.
+
+| Tag | MTP | Mode | Avg TPS | Min–Max TPS | TTFT | Tokens/10 | Think | Previous |
+|---|---|---|---|---|---|---|---|---|
+| `gemma4:12b-it-qat` | off | `--no-think` | **43.7 t/s** | 43.1–44.6 | 353 ms | 7,406 | — | 38.6 (0.40.1), 41.0 (0.33.2) |
+| `qwen3.5:9b-mtp-q8_0` | depth 2 | `--no-think` | 52.0 t/s | 44.2–62.9 | **189 ms** | 7,418 | — | 53.2, 639 ms |
+| `qwen3.5:9b-mtp-q8_0` | depth 2 | `--think` | 55.2 t/s | 48.7–58.1 | **261 ms** | 39,519 | 28,221 (71%) | 56.0, 681 ms |
+
+Iterations 1–5 and 6–10 mirror each other in all three rows. Mean accepted length 2.26 /
+2.22, against 2.23 / 2.26 last round.
+
+### Findings
+
+- **gemma: +13% over 0.40.1, +7% over 0.33.2.** Round 2 pinned a ~6% pure-GPU loss on
+  0.40.1; 0.40.7 more than recovers it, and 43.7 t/s beats every earlier gemma4 12B row on
+  this card (best before: 41.0). Driver and Ollama moved together, so the gain is not
+  attributed to either. The output also changed (7,406 tokens vs 0.40.1's 7,019), but TPS
+  on this model does not track output length.
+- **qwen3.5 decode is flat (−1 to −2%)** and that is within what the changed outputs
+  explain: acceptance is the same, and the token counts moved (7.4k vs 8.6k no-think).
+  Whatever lifted gemma did not reach qwen3.5 + MTP.
+- **TTFT is ~3× faster on qwen3.5, and most of it is real.** Splitting the first pass from
+  the repeats (iterations 6–10 reuse 1–5's prompts):
+
+  | | 0.40.1 | 0.40.7 |
+  |---|---|---|
+  | Iterations 1–5 (first sight of the prompt) | 580–750 ms | **170–340 ms** |
+  | Iterations 7–10 (repeats) | 580–590 ms | **127–166 ms** |
+
+  The first-pass drop is the speedup. The repeats settling at ~130 ms — where 0.40.1 showed
+  no repeat benefit — looks like prompt-cache reuse (`prompt_save` lines in the server
+  log), which chat-style use gets on every turn. Gemma's TTFT also halved (661 → 353 ms
+  against the June file). These are short prompts: long-prompt prefill was not measured.
+- `ollama ps` still reports `qwen3.5:9b-mtp-q8_0` as 2.0 GB; it is ~11 GB resident.
+
+### Bottom line (0.40.7 on 16 GB)
+
+Upgrade. Same recommendation — **`qwen3.5:9b-mtp-q8_0`**, now 52–55 t/s with **~0.2 s
+TTFT** instead of ~0.6 s — and gemma4 12B gets a free 13%. The TTFT change is the one users
+will feel: it moves this card into comfortable interactive and voice-assistant latency.
+qwen3.8 on this stack is not re-run yet.
+
 ## TODO
 
 - [x] ~~Test with `num_ctx=4096` to see if shorter context improves TPS~~ — no effect on qwen3.8:27b (16 KV layers); may still hold for full-KV models
@@ -1263,6 +1334,7 @@ capability and can live with 12 t/s, use `qwen3.8-27b-mtp2-gpu56`.
 - [x] ~~5060 Ti: validate `qwen3.8-27b-mtp2` at `num_gpu 56` on the full prompt set~~ — **11.8 t/s no-think / 11.6 think** on driver 617.42 / Ollama 0.40.1 (`modelfiles/qwen3.8-27b-mtp2-gpu56.Modelfile`), +51% over the auto-fit
 - [ ] 5060 Ti: time image input on `qwen3.8-27b-mtp2-gpu56`, where the vision encoder runs on the CPU
 - [ ] 5060 Ti: find what cost the CPU-offloaded path 11% between Sept and Oct 2026 with Ollama held at 0.33.2 (driver 616.92 → 617.42, or Windows/WSL/Docker Desktop) — a CPU-only (`num_gpu 0`) baseline would split it next time
-- [ ] Check Ollama 0.40.1's ~6% pure-GPU slowdown vs 0.33.2 (gemma4:12b-it-qat, 5060 Ti) on the 5090
+- [x] ~~Check Ollama 0.40.1's ~6% pure-GPU slowdown vs 0.33.2~~ — gone on 0.40.7 / driver 621.01: gemma4:12b-it-qat 43.7 t/s on the 5060 Ti, +13% over 0.40.1 (not re-checked on the 5090)
+- [ ] 5060 Ti: re-run `qwen3.8-27b-mtp2-gpu56` on 0.40.7 / 621.01, and measure long-prompt prefill to see whether the ~3× TTFT gain holds beyond short prompts
 - [ ] 5060 Ti: probe `num_gpu 57`/`58` on `qwen3.8-27b-mtp2` with "Prefer No Sysmem Fallback" set, and try qwen3.5:9b MTP at `draft_num_predict` 1 and 3
 - [ ] 5060 Ti: find out why a CPU-side layer costs ~12 ms/token, about twice what RAM bandwidth predicts — `num_thread` above the default 6 is the first thing to try
