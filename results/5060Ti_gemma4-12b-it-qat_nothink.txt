@@ -4,35 +4,35 @@ GPU Results: NVIDIA GeForce RTX 5060 Ti
 Hardware
   GPU:          NVIDIA GeForce RTX 5060 Ti
   VRAM:         16311 MiB
-  Driver:       610.62
+  Driver:       621.01
 
 Software
-  Ollama:       0.30.10
+  Ollama:       0.40.7
   Model:        gemma4:12b-it-qat
   Context:      8192
   Batch size:   1024
   Sampling:     temp=0.7, top_p=0.9, min_p=0.05, repeat_penalty=1.08, seed=42
 
 Results (10 iterations, warmup discarded)
-  Avg TPS:      40.5 t/s
-  Min TPS:      39.8 t/s
-  Max TPS:      41.3 t/s
-  Avg TTFT:     661 ms
-  Total tokens: 7,977
-  Total time:   198.0s
+  Avg TPS:      43.7 t/s
+  Min TPS:      43.1 t/s
+  Max TPS:      44.6 t/s
+  Avg TTFT:     353 ms
+  Total tokens: 7,406
+  Total time:   169.5s
 
 Per-iteration breakdown
     #   Tokens    Think      TPS      TTFT      Gen
   ---  -------  -------  -------  --------  -------
-    1      281        0    41.0      605ms     6.9s
-    2    1,160        0    40.2      632ms    28.9s
-    3      938        0    40.1      745ms    23.4s
-    4      422        0    41.2      758ms    10.2s
-    5    1,182        0    40.2      670ms    29.4s
-    6      292        0    41.3      760ms     7.1s
-    7    1,160        0    39.8      568ms    29.1s
-    8      938        0    40.3      741ms    23.3s
-    9      422        0    41.0      569ms    10.3s
-   10    1,182        0    40.1      564ms    29.4s
+    1      257        0    43.1      326ms     6.0s
+    2      932        0    43.8      364ms    21.3s
+    3    1,019        0    43.7      439ms    23.3s
+    4      451        0    44.6      461ms    10.1s
+    5    1,041        0    43.5      355ms    23.9s
+    6      263        0    43.6      445ms     6.0s
+    7      932        0    43.5      281ms    21.4s
+    8    1,019        0    43.7      288ms    23.3s
+    9      451        0    44.1      279ms    10.2s
+   10    1,041        0    43.6      296ms    23.9s
 
-Generated: 2026-06-18T04:23:58.508351+00:00
+Generated: 2026-10-21T19:41:30.678246+00:00

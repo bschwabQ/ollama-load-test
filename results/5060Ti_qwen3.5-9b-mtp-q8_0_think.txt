@@ -4,36 +4,36 @@ GPU Results: NVIDIA GeForce RTX 5060 Ti
 Hardware
   GPU:          NVIDIA GeForce RTX 5060 Ti
   VRAM:         16311 MiB
-  Driver:       617.42
+  Driver:       621.01
 
 Software
-  Ollama:       0.40.1
+  Ollama:       0.40.7
   Model:        qwen3.5:9b-mtp-q8_0
   Context:      8192
   Batch size:   1024
   Sampling:     temp=0.7, top_p=0.9, min_p=0.05, repeat_penalty=1.08, seed=42
 
 Results (10 iterations, warmup discarded)
-  Avg TPS:      56.0 t/s
-  Min TPS:      49.3 t/s
-  Max TPS:      60.4 t/s
-  Avg TTFT:     681 ms
-  Total tokens: 34,269
-  Think tokens: 23,177
-  Total time:   618.1s
+  Avg TPS:      55.2 t/s
+  Min TPS:      48.7 t/s
+  Max TPS:      58.1 t/s
+  Avg TTFT:     261 ms
+  Total tokens: 39,519
+  Think tokens: 28,221
+  Total time:   720.9s
 
 Per-iteration breakdown
     #   Tokens    Think      TPS      TTFT      Gen
   ---  -------  -------  -------  --------  -------
-    1    5,261    4,671    57.7      742ms    91.2s
-    2    1,429      115    56.9      579ms    25.1s
-    3    3,174    1,765    60.4      696ms    52.5s
-    4    2,523    2,041    55.8      746ms    45.2s
-    5    4,448    2,774    49.4      720ms    90.0s
-    6    5,860    5,116    58.2      779ms   100.6s
-    7    1,429      115    56.7      793ms    25.2s
-    8    3,174    1,765    60.2      582ms    52.7s
-    9    2,523    2,041    55.7      589ms    45.3s
-   10    4,448    2,774    49.3      588ms    90.2s
+    1    6,013    5,130    57.4      335ms   104.8s
+    2    1,338      121    55.0      170ms    24.3s
+    3    3,658    2,390    57.8      253ms    63.3s
+    4    3,711    3,259    56.6      311ms    65.6s
+    5    4,820    3,036    48.7      338ms    99.1s
+    6    6,452    5,479    57.4      359ms   112.5s
+    7    1,338      121    54.9      393ms    24.4s
+    8    3,658    2,390    58.1      152ms    62.9s
+    9    3,711    3,259    57.0      130ms    65.1s
+   10    4,820    3,036    48.7      166ms    98.9s
 
-Generated: 2026-10-10T01:41:25.625466+00:00
+Generated: 2026-10-21T20:16:26.880980+00:00
